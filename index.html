@@ -33,6 +33,7 @@
       "top top"
       "map side";
     height:100vh;
+    height:100dvh;
     width:100vw;
   }
   #app.side-collapsed{
@@ -45,21 +46,25 @@
   }
   #sideToggleTab{
     position:fixed;
-    top:70px;
+    top:50%;
     right:320px;
+    transform:translateY(-50%);
     z-index:40;
     font-family:'Cinzel',serif;
     background: var(--ink-soft);
-    color: var(--parchment);
-    border:1px solid var(--gold);
+    color: var(--gold-bright);
+    border:2px solid var(--gold);
     border-right:none;
-    border-radius:5px 0 0 5px;
-    padding:10px 7px;
+    border-radius:10px 0 0 10px;
+    padding:22px 12px;
     cursor:pointer;
-    font-size:14px;
+    font-size:22px;
+    line-height:1;
+    box-shadow: -3px 0 10px rgba(0,0,0,0.4);
     transition: right 0.28s ease;
   }
-  #sideToggleTab:hover{ filter:brightness(1.2); }
+  #sideToggleTab:hover{ filter:brightness(1.25); }
+  #sideToggleTab:active{ transform:translateY(-50%) scale(0.94); }
   #app.side-collapsed #sideToggleTab{
     right:0px;
   }
@@ -281,7 +286,7 @@
     <button id="btnEndTurn">End Turn ⚔</button>
   </div>
 
-  <button id="sideToggleTab" title="Toggle info panel">☰</button>
+  <button id="sideToggleTab" title="Toggle info panel">▶</button>
 
   <div id="side">
     <div class="panel" id="dynastyPanel">
@@ -1275,7 +1280,7 @@ function renderSelInfo(){
 function setSidePanel(open){
   sidePanelOpen = open;
   document.getElementById("app").classList.toggle("side-collapsed", !open);
-  document.getElementById("sideToggleTab").textContent = "☰";
+  document.getElementById("sideToggleTab").textContent = open ? "▶" : "◀";
   updateCanvasSize();
   draw();
 }
