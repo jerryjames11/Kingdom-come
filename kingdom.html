@@ -33,6 +33,7 @@
       "top top"
       "map side";
     height:100vh;
+    height:100dvh;
     width:100vw;
   }
   #app.side-collapsed{
@@ -43,24 +44,35 @@
     overflow:hidden;
     border-left:none;
   }
-  #sideToggleTab{
+  #sideEdgeTabs{
     position:fixed;
-    top:70px;
+    top:50%;
     right:320px;
+    transform:translateY(-50%);
     z-index:40;
+    display:flex;
+    flex-direction:column;
+    transition: right 0.28s ease;
+  }
+  .sideTabBtn{
     font-family:'Cinzel',serif;
     background: var(--ink-soft);
     color: var(--parchment);
-    border:1px solid var(--gold);
+    border:2px solid var(--gold);
     border-right:none;
-    border-radius:5px 0 0 5px;
-    padding:10px 7px;
+    padding:14px 10px;
     cursor:pointer;
-    font-size:14px;
-    transition: right 0.28s ease;
+    font-size:13px;
+    letter-spacing:0.5px;
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    box-shadow: -3px 0 10px rgba(0,0,0,0.4);
   }
-  #sideToggleTab:hover{ filter:brightness(1.2); }
-  #app.side-collapsed #sideToggleTab{
+  .sideTabBtn:first-child{ border-radius:10px 0 0 0; }
+  .sideTabBtn:last-child{ border-radius:0 0 0 10px; }
+  .sideTabBtn:hover{ filter:brightness(1.25); }
+  .sideTabBtn.active{ background: var(--blood); color: var(--gold-bright); }
+  #app.side-collapsed #sideEdgeTabs{
     right:0px;
   }
   #topbar{
@@ -126,6 +138,7 @@
   #mapCanvas{
     position:absolute; top:0; left:0;
     cursor:grab;
+    touch-action:none;
   }
   #tooltip{
     position:absolute;
@@ -259,6 +272,37 @@
     margin-top:18px; font-family:'Cinzel',serif; background:var(--gold); color:var(--ink);
     border:none; padding:10px 20px; border-radius:4px; cursor:pointer; font-size:15px;
   }
+
+  #hallCanvas{
+    width:100%; height:auto; display:block;
+    border:2px solid var(--parchment-shadow);
+    border-radius:6px;
+    background: linear-gradient(180deg,#3a2c1c,#26190f);
+  }
+  .courtTabBtn{
+    font-family:'Cinzel',serif; background:var(--parchment-dark); color:var(--ink-soft);
+    border:1px solid var(--parchment-shadow); border-radius:4px; padding:6px 10px;
+    cursor:pointer; font-size:12px;
+  }
+  .courtTabBtn.active{ background:var(--blood); color:var(--parchment); border-color:var(--gold); }
+  .courtRow{
+    display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:4px;
+    background: rgba(255,255,255,0.35); border:1px solid var(--parchment-shadow);
+    border-radius:5px; padding:8px 10px; margin-bottom:7px; font-size:12.5px;
+  }
+  .courtRow b{ color:var(--ink); }
+  .courtBtn{
+    font-family:'Cinzel',serif; background:var(--blood); color:var(--parchment);
+    border:1px solid var(--gold); border-radius:4px; padding:6px 10px; cursor:pointer; font-size:11.5px;
+  }
+  .courtBtn:hover{ filter:brightness(1.15); }
+  .courtBtn:disabled{ opacity:0.45; cursor:not-allowed; filter:none; }
+  .courtBtn.secondary{ background:var(--ink-soft); }
+  .courtCandidate{
+    display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:4px;
+    padding:6px 0; border-bottom:1px dotted var(--parchment-shadow); font-size:12px;
+  }
+  .courtEmpty{ font-style:italic; color:var(--ink-soft); font-size:12.5px; padding:8px 0; }
 </style>
 </head>
 <body>
@@ -267,6 +311,7 @@
     <h1>⚜ Legacy &amp; Conquest</h1>
     <div id="dateDisplay">Month 1, Year 1066</div>
     <div id="speedControls">
+      <button id="btnMultiSelect" title="Toggle multi-select for army stacks">Multi-Select: Off</button>
       <button id="btnZoomOut" title="Zoom out">−</button>
       <button id="btnZoomReset" title="Reset view">⤢</button>
       <button id="btnZoomIn" title="Zoom in">+</button>
@@ -280,51 +325,69 @@
     <button id="btnEndTurn">End Turn ⚔</button>
   </div>
 
-  <button id="sideToggleTab" title="Toggle info panel">☰</button>
+  <div id="sideEdgeTabs">
+    <button class="sideTabBtn active" data-tab="dynasty">Dynasty</button>
+    <button class="sideTabBtn" data-tab="court">Court</button>
+  </div>
 
   <div id="side">
-    <div class="panel" id="dynastyPanel">
-      <h2>Your Dynasty</h2>
-      <div id="rulerBox">
-        <div class="crest" id="rulerCrest"></div>
-        <div>
-          <div style="font-family:'Cinzel',serif; font-size:14px;" id="rulerName">-</div>
-          <div style="font-size:12px; color:var(--ink-soft);" id="rulerTitle">-</div>
+    <div id="sideDynastyContent">
+      <div class="panel" id="dynastyPanel">
+        <h2>Your Dynasty</h2>
+        <div id="rulerBox">
+          <div class="crest" id="rulerCrest"></div>
+          <div>
+            <div style="font-family:'Cinzel',serif; font-size:14px;" id="rulerName">-</div>
+            <div style="font-size:12px; color:var(--ink-soft);" id="rulerTitle">-</div>
+          </div>
         </div>
+        <div class="statline"><span>Age</span><b id="rulerAge">-</b></div>
+        <div class="statline"><span>Martial</span><b id="statMartial">-</b></div>
+        <div class="statline"><span>Diplomacy</span><b id="statDiplomacy">-</b></div>
+        <div class="statline"><span>Stewardship</span><b id="statStewardship">-</b></div>
+        <div class="statline"><span>Intrigue</span><b id="statIntrigue">-</b></div>
+        <div class="statline"><span>Generation</span><b id="statGen">-</b></div>
+        <hr style="border:none;border-top:1px dotted var(--parchment-shadow);margin:8px 0;">
+        <div class="statline"><span>Treasury</span><b id="statGold">-</b></div>
+        <div class="statline"><span>Provinces</span><b id="statProvinces">-</b></div>
+        <div class="statline"><span>Battles Won</span><b id="statVictories">-</b></div>
+        <div class="statline"><span>Reputation</span><b id="statReputation" style="color:var(--gold);">-</b></div>
+        <div class="statline"><span>Legacy Score</span><b id="statPrestige" style="color:var(--blood);">-</b></div>
+        <hr style="border:none;border-top:1px dotted var(--parchment-shadow);margin:8px 0;">
+        <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--ink-soft);margin-bottom:4px;">
+          <span>⚔ Military</span><span>Treasury 💰</span>
+        </div>
+        <input type="range" id="policySlider" min="0" max="100" value="50" style="width:100%;">
+        <div id="policyLabel" style="text-align:center;font-size:12px;color:var(--ink-soft);margin-top:3px;">Balanced — 50 / 50</div>
+        <div id="policyRates" style="text-align:center;font-size:11.5px;color:var(--gold);margin-top:2px;">+0 gold/turn · +0 troops/turn</div>
       </div>
-      <div class="statline"><span>Age</span><b id="rulerAge">-</b></div>
-      <div class="statline"><span>Martial</span><b id="statMartial">-</b></div>
-      <div class="statline"><span>Diplomacy</span><b id="statDiplomacy">-</b></div>
-      <div class="statline"><span>Stewardship</span><b id="statStewardship">-</b></div>
-      <div class="statline"><span>Intrigue</span><b id="statIntrigue">-</b></div>
-      <div class="statline"><span>Generation</span><b id="statGen">-</b></div>
-      <hr style="border:none;border-top:1px dotted var(--parchment-shadow);margin:8px 0;">
-      <div class="statline"><span>Treasury</span><b id="statGold">-</b></div>
-      <div class="statline"><span>Provinces</span><b id="statProvinces">-</b></div>
-      <div class="statline"><span>Battles Won</span><b id="statVictories">-</b></div>
-      <div class="statline"><span>Legacy Score</span><b id="statPrestige" style="color:var(--blood);">-</b></div>
-      <hr style="border:none;border-top:1px dotted var(--parchment-shadow);margin:8px 0;">
-      <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--ink-soft);margin-bottom:4px;">
-        <span>⚔ Military</span><span>Treasury 💰</span>
+
+      <div class="panel" id="selPanelWrap">
+        <h2>Selected Province</h2>
+        <div id="selInfo"><div class="empty">Click a territory on the map.</div></div>
       </div>
-      <input type="range" id="policySlider" min="0" max="100" value="50" style="width:100%;">
-      <div id="policyLabel" style="text-align:center;font-size:12px;color:var(--ink-soft);margin-top:3px;">Balanced — 50 / 50</div>
-      <div id="policyRates" style="text-align:center;font-size:11.5px;color:var(--gold);margin-top:2px;">+0 gold/turn · +0 troops/turn</div>
+
+      <div class="panel">
+        <h2>Realms of the Map</h2>
+        <div id="kingdomList"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Chronicle</h2>
+        <div id="chronicle"></div>
+      </div>
     </div>
 
-    <div class="panel" id="selPanelWrap">
-      <h2>Selected Province</h2>
-      <div id="selInfo"><div class="empty">Click a territory on the map.</div></div>
-    </div>
-
-    <div class="panel">
-      <h2>Realms of the Map</h2>
-      <div id="kingdomList"></div>
-    </div>
-
-    <div class="panel">
-      <h2>Chronicle</h2>
-      <div id="chronicle"></div>
+    <div id="sideCourtContent" style="display:none;">
+      <div class="panel" style="padding:10px;">
+        <canvas id="hallCanvas" width="300" height="190"></canvas>
+        <div id="courtTabs" style="display:flex;gap:6px;margin:10px 0 12px;border-bottom:2px solid var(--parchment-shadow);padding-bottom:8px;">
+          <button class="courtTabBtn" data-tab="family">Family</button>
+          <button class="courtTabBtn" data-tab="cabinet">Cabinet</button>
+          <button class="courtTabBtn" data-tab="guests">Guests</button>
+        </div>
+        <div id="courtContent"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -364,6 +427,8 @@ const MAX_STACKS = 5; // number of army stacks each kingdom starts the game with
 const RECRUIT_COST = 18;
 const RECRUIT_RATE = 0.2/3; // scales population income into recruit-pool growth per turn
 const REBUILD_CAPITAL_COST = 2500;
+const TUTOR_COST = 8;
+let childCounter = 0;
 const NAMES_MALE = ["Aldric","Baldwin","Cedric","Domnall","Edmund","Fenric","Godfrey","Harald","Ivo","Leofric","Osric","Roderic","Sigmund","Thorald","Wulfric","Alaric","Bertram","Conrad","Dietrich","Emeric"];
 const NAMES_FEMALE = ["Adela","Beatrix","Cecily","Edith","Freya","Gisela","Helewise","Ingrid","Judith","Leonor","Matilda","Osanna","Rowena","Sybil","Wynne"];
 const HOUSE_NAMES = ["Ashworth","Blackmoor","Cavendish","Drakemoor","Eastwynd","Fairhollow","Greymantle","Hartwell","Ironvale","Lockhart","Marrow","Norwyn","Oakhurst","Pendragon","Ravensworth","Stormcrest","Thornfield","Vaelric","Wintermere","Yorath"];
@@ -384,17 +449,28 @@ let kingdoms = [];    // list of kingdom objects
 let chronicle = [];
 let tick = 0;
 let selectedKey = null;      // tile currently shown in the info panel
-let selectedArmyId = null;   // player's army currently awaiting a march order
+let selectedArmyIds = [];   // player's armies currently awaiting a march order (multi-select)
+let multiSelectMode = false;
+let routeMode = false;
+let pendingWaypoints = [];  // tile keys forming the route being built, in order
 let pendingPath = null;      // {armyId, path:[{q,r}...], destKey}
 let playerKingdomId = 0;
 let gameOver = false;
 let armyCounter = 0;
 let sidePanelOpen = true;
+let sideTab = "dynasty";
+let courtTab = "family";
+let courtGuest = null;
+const GUEST_NAMES_MALE = ["Aymer","Basile","Corentin","Draven","Emeric","Falk","Guiscard","Hendric","Ionel","Kasimir","Loel","Merek","Norrin","Osten","Percival","Quillan","Rutger","Silvain","Tancred","Ulric"];
+const GUEST_NAMES_FEMALE = ["Alienor","Brioc","Cerys","Delphine","Elowen","Faye","Guinevra","Halcyon","Iolanthe","Jocelyn","Kerensa","Liora","Melisande","Odile","Perpetua","Rosalind","Seraphina","Tamsin","Ysolde","Zelie"];
+const GUEST_GIFTS = ["a chest of gold coin","a bolt of fine silk","a pair of hunting falcons","a case of aged wine","a string of pearls","fine tempered steel blades","spiced trade goods","a warhorse of noble breeding"];
 
 // camera (pan & zoom)
 let camX = 0, camY = 0, zoom = 1;
 const MIN_ZOOM = 0.35, MAX_ZOOM = 3;
 let isDragging = false, dragMoved = false, dragStartX=0, dragStartY=0, camStartX=0, camStartY=0;
+let touchMode = null; // 'pan' | 'pinch' | null
+let pinchStartDist = 1, pinchStartZoom = 1, pinchWorldX = 0, pinchWorldY = 0;
 
 function key(q,r){ return q+","+r; }
 
@@ -478,6 +554,9 @@ function growKingdoms(numKingdoms){
   while(seeds.length<numKingdoms){ seeds.push(choice(allKeys)); }
 
   kingdoms = seeds.map((seedKey,i)=>makeKingdom(i, seedKey, i===playerKingdomId));
+  kingdoms.forEach(kd=>{
+    for(let i=0;i<4;i++) kd.ministerCandidates.push(generateMinisterCandidate());
+  });
 
   const frontiers = seeds.map(s=>[s]);
   const claimed = new Set();
@@ -556,19 +635,82 @@ function makeKingdom(id, seedKey, isPlayer){
     },
     gold: 200,
     prestige: 0,
+    reputation: 50,
     victories: 0,
     generation: 1,
     alive: true,
     armies: [],
     recruitPool: 0,
     policy: 50,
-    capitalLost: false
+    capitalLost: false,
+    spouse: null,
+    children: [],
+    ministers: { war:null, treasury:null, diplomacy:null, intrigue:null },
+    ministerCandidates: []
   };
 }
 
 function makeArmy(kingdomId, q, r, troops){
   armyCounter += 1;
   return { id:"a"+armyCounter, kingdomId, q, r, troops, path: [] };
+}
+
+// ---------- COURT: effective stats (ruler + appointed ministers) ----------
+function effMartial(kd){ return kd.ruler.martial + (kd.ministers.war ? kd.ministers.war.skill*0.5 : 0); }
+function effStewardship(kd){ return kd.ruler.stewardship + (kd.ministers.treasury ? kd.ministers.treasury.skill*0.5 : 0); }
+function effDiplomacy(kd){ return kd.ruler.diplomacy + (kd.ministers.diplomacy ? kd.ministers.diplomacy.skill*0.5 : 0); }
+function intrigueBoost(kd){ return kd.ministers.intrigue ? kd.ministers.intrigue.skill : 0; }
+
+function generateMinisterCandidate(){
+  const male = Math.random()<0.5;
+  return {
+    name: male?choice(NAMES_MALE):choice(NAMES_FEMALE),
+    male,
+    skill: randi(3,10)
+  };
+}
+
+const MINISTER_ROLES = [
+  {key:"war", label:"Minister of War", icon:"⚔", desc:"Strengthens your armies in battle."},
+  {key:"treasury", label:"Minister of Treasury", icon:"💰", desc:"Increases gold income."},
+  {key:"diplomacy", label:"Minister of Diplomacy", icon:"🕊", desc:"Improves court guest outcomes and marriage prospects."},
+  {key:"intrigue", label:"Minister of Intrigue", icon:"🗡", desc:"Speeds up troop recruitment."}
+];
+
+function hireCandidateMinister(kd, roleKey, candidateIdx){
+  const cand = kd.ministerCandidates[candidateIdx];
+  if(!cand) return false;
+  const hireCost = cand.skill * 15;
+  if(kd.gold < hireCost) return false;
+  kd.gold -= hireCost;
+  kd.ministers[roleKey] = { name: cand.name, male: cand.male, skill: cand.skill, upkeep: Math.round(cand.skill*1.5) };
+  kd.ministerCandidates.splice(candidateIdx,1);
+  if(kd.isPlayer) log(`${cand.name} is appointed ${MINISTER_ROLES.find(r=>r.key===roleKey).label}.`, "gold-event");
+  return true;
+}
+
+function dismissMinister(kd, roleKey){
+  const m = kd.ministers[roleKey];
+  if(!m) return;
+  kd.ministers[roleKey] = null;
+  if(kd.isPlayer) log(`${m.name} is dismissed as ${MINISTER_ROLES.find(r=>r.key===roleKey).label}.`, "");
+}
+
+function tickMinisterCandidates(){
+  for(const kd of kingdoms){
+    if(!kd.alive) continue;
+    if(kd.ministerCandidates.length<4 && Math.random()<0.08){
+      kd.ministerCandidates.push(generateMinisterCandidate());
+    }
+    if(!kd.isPlayer){
+      const emptyRoles = MINISTER_ROLES.filter(r=>!kd.ministers[r.key]);
+      if(emptyRoles.length && kd.ministerCandidates.length && Math.random()<0.05){
+        const role = choice(emptyRoles);
+        const idx = randi(0, kd.ministerCandidates.length-1);
+        hireCandidateMinister(kd, role.key, idx);
+      }
+    }
+  }
 }
 
 // ---------- ECONOMY / SIM ----------
@@ -596,15 +738,20 @@ function tickEconomy(){
     if(!kd.alive) continue;
     let goldGain = 0;
     let popIncome = 0;
+    const stew = effStewardship(kd);
     for(const t of provincesOf(kd.id)){
-      t.population = Math.min(900, t.population + rand(0.4,1.6) * (1+kd.ruler.stewardship*0.03));
-      goldGain += t.population * 0.006 * (1+kd.ruler.stewardship*0.04);
+      t.population = Math.min(900, t.population + rand(0.4,1.6) * (1+stew*0.03));
+      goldGain += t.population * 0.006 * (1+stew*0.04);
       popIncome += t.population * 0.004;
     }
     kd.gold += goldGain * (0.5 + (kd.policy/100));
     const recruitBonus = 1 + Math.min(1.5, kd.victories * 0.05);
-    const recruitMultiplier = 0.5 + ((100-kd.policy)/100);
+    const recruitMultiplier = (0.5 + ((100-kd.policy)/100)) * (1 + intrigueBoost(kd)*0.04);
     kd.recruitPool += popIncome * recruitBonus * RECRUIT_RATE * recruitMultiplier;
+
+    let upkeep = 0;
+    Object.values(kd.ministers).forEach(m=>{ if(m) upkeep += m.upkeep; });
+    kd.gold = Math.max(0, kd.gold - upkeep);
 
     if(kd.recruitPool >= RECRUIT_COST){
       kd.recruitPool -= RECRUIT_COST;
@@ -627,6 +774,8 @@ function tickAging(){
     if(!kd.alive) continue;
     kd.ruler.age += 1;
     kd.prestige += 1;
+    kd.reputation = clamp(kd.reputation + (kd.reputation<50?0.5:(kd.reputation>50?-0.5:0)), 0, 100);
+    kd.children.forEach(c=>{ c.age += 1; });
     const deathChance = kd.ruler.age < 45 ? 0.01
       : kd.ruler.age < 60 ? 0.05
       : kd.ruler.age < 75 ? 0.14
@@ -638,24 +787,155 @@ function tickAging(){
 }
 
 function succession(kd, cause){
-  const heirMartial = clamp(Math.round((kd.ruler.martial + randi(1,10))/2), 1, 10);
-  const heirDiplomacy = clamp(Math.round((kd.ruler.diplomacy + randi(1,10))/2), 1, 10);
-  const heirStewardship = clamp(Math.round((kd.ruler.stewardship + randi(1,10))/2), 1, 10);
-  const heirIntrigue = clamp(Math.round((kd.ruler.intrigue + randi(1,10))/2), 1, 10);
-  const male = Math.random()<0.6;
   const oldName = kd.ruler.name;
-  kd.ruler = {
-    name: male?choice(NAMES_MALE):choice(NAMES_FEMALE),
-    male,
-    age: randi(17,26),
-    martial: heirMartial, diplomacy: heirDiplomacy,
-    stewardship: heirStewardship, intrigue: heirIntrigue
-  };
+  const eligible = kd.children.filter(c=>c.age>=16).sort((a,b)=>b.age-a.age);
+  let newRuler;
+  let heirSource;
+  if(eligible.length>0){
+    const heir = eligible[0];
+    kd.children = kd.children.filter(c=>c!==heir);
+    newRuler = { name: heir.name, male: heir.male, age: heir.age, martial: Math.round(heir.martial), diplomacy: Math.round(heir.diplomacy), stewardship: Math.round(heir.stewardship), intrigue: Math.round(heir.intrigue) };
+    heirSource = "your own child";
+  } else {
+    const heirMartial = clamp(Math.round((kd.ruler.martial + randi(1,10))/2), 1, 10);
+    const heirDiplomacy = clamp(Math.round((kd.ruler.diplomacy + randi(1,10))/2), 1, 10);
+    const heirStewardship = clamp(Math.round((kd.ruler.stewardship + randi(1,10))/2), 1, 10);
+    const heirIntrigue = clamp(Math.round((kd.ruler.intrigue + randi(1,10))/2), 1, 10);
+    const male = Math.random()<0.6;
+    newRuler = {
+      name: male?choice(NAMES_MALE):choice(NAMES_FEMALE),
+      male, age: randi(17,26),
+      martial: heirMartial, diplomacy: heirDiplomacy,
+      stewardship: heirStewardship, intrigue: heirIntrigue
+    };
+    heirSource = "a distant cousin";
+  }
+  kd.ruler = newRuler;
+  kd.spouse = null;
+  kd.children = [];
   kd.generation += 1;
   kd.prestige += 8;
-  log(`${oldName} of House ${kd.house} has died (${cause}). ${kd.ruler.name} rises as the new ruler — Generation ${kd.generation}.`, kd.isPlayer ? "gold-event" : "");
+  log(`${oldName} of House ${kd.house} has died (${cause}). ${kd.ruler.name}, ${heirSource}, rises as the new ruler — Generation ${kd.generation}.`, kd.isPlayer ? "gold-event" : "");
 }
 
+function tryArrangeMarriage(kd){
+  if(kd.spouse) return false;
+  const spouseMale = !kd.ruler.male;
+  kd.spouse = { name: spouseMale?choice(NAMES_MALE):choice(NAMES_FEMALE), male: spouseMale };
+  if(kd.isPlayer) log(`${kd.ruler.name} weds ${kd.spouse.name}, strengthening House ${kd.house}.`, "gold-event");
+  return true;
+}
+
+function tickFamily(){
+  for(const kd of kingdoms){
+    if(!kd.alive) continue;
+    if(kd.spouse && kd.ruler.age>=16 && kd.ruler.age<=50 && kd.children.length<5 && Math.random()<0.02){
+      const male = Math.random()<0.5;
+      childCounter += 1;
+      const child = {
+        id: "c"+childCounter,
+        name: male?choice(NAMES_MALE):choice(NAMES_FEMALE), male, age:0,
+        martial: clamp(Math.round((kd.ruler.martial+randi(1,10))/2),1,10),
+        diplomacy: clamp(Math.round((kd.ruler.diplomacy+randi(1,10))/2),1,10),
+        stewardship: clamp(Math.round((kd.ruler.stewardship+randi(1,10))/2),1,10),
+        intrigue: clamp(Math.round((kd.ruler.intrigue+randi(1,10))/2),1,10),
+        tutorFocus: null
+      };
+      kd.children.push(child);
+      if(kd.isPlayer) log(`${kd.ruler.name} and ${kd.spouse.name} welcome a child, ${child.name}, into House ${kd.house}.`, "gold-event");
+    }
+  }
+}
+
+function tickEducation(){
+  for(const kd of kingdoms){
+    if(!kd.alive) continue;
+    for(const c of kd.children){
+      if(!c.tutorFocus || c.age>=16) continue;
+      if(kd.gold >= TUTOR_COST){
+        kd.gold -= TUTOR_COST;
+        c[c.tutorFocus] = clamp(c[c.tutorFocus] + 0.05, 1, 10);
+      }
+    }
+  }
+}
+
+// ---------- COURT: visiting guests ----------
+function tickCourtGuest(){
+  const kd = kingdoms[playerKingdomId];
+  if(!kd || !kd.alive) return;
+  if(courtGuest){
+    if(tick >= courtGuest.departTick){
+      if(!courtGuest.acted.gift && !courtGuest.acted.trade && !courtGuest.acted.betrothal){
+        kd.prestige = Math.max(0, kd.prestige-2);
+        kd.reputation = clamp(kd.reputation-2, 0, 100);
+        log(`${courtGuest.name} departs the court unattended and unimpressed.`, "");
+      } else {
+        log(`${courtGuest.name} departs the court, thanking House ${kd.house} for its hospitality.`, "");
+      }
+      courtGuest = null;
+    }
+    return;
+  }
+  if(tick < 4) return;
+  if(Math.random() < 0.14){
+    const otherKingdoms = kingdoms.filter(k=>k.alive && k.id!==playerKingdomId);
+    const fromFarLands = otherKingdoms.length===0 || Math.random()<0.35;
+    const sourceKingdomId = fromFarLands ? null : choice(otherKingdoms).id;
+    const male = Math.random()<0.5;
+    const name = male?choice(GUEST_NAMES_MALE):choice(GUEST_NAMES_FEMALE);
+    const gift = choice(GUEST_GIFTS);
+    const giftValue = randi(30,140);
+    courtGuest = {
+      name, male, sourceKingdomId, gift, giftValue,
+      arrivalTick: tick, departTick: tick+3,
+      acted: {gift:false, trade:false, betrothal:false}
+    };
+    const originLabel = sourceKingdomId!==null ? `House ${kingdoms[sourceKingdomId].house}` : "a distant land";
+    log(`${name} arrives at court from ${originLabel}, bearing ${gift}.`, "gold-event");
+  }
+}
+
+window.courtAcceptGift = function(){
+  const kd = kingdoms[playerKingdomId];
+  if(!courtGuest || courtGuest.acted.gift) return;
+  kd.gold += courtGuest.giftValue;
+  kd.prestige += 2;
+  kd.reputation = clamp(kd.reputation+1, 0, 100);
+  courtGuest.acted.gift = true;
+  log(`You accept ${courtGuest.gift} from ${courtGuest.name}, worth ${courtGuest.giftValue} gold.`, "gold-event");
+  renderCourt();
+};
+
+window.courtTradeDeal = function(){
+  const kd = kingdoms[playerKingdomId];
+  if(!courtGuest || courtGuest.acted.trade) return;
+  const profit = randi(30,80);
+  kd.gold += profit;
+  kd.prestige += 1;
+  kd.reputation = clamp(kd.reputation+1, 0, 100);
+  courtGuest.acted.trade = true;
+  log(`A trade deal with ${courtGuest.name} nets House ${kd.house} ${profit} gold.`, "gold-event");
+  renderCourt();
+};
+
+window.courtProposeBetrothal = function(){
+  const kd = kingdoms[playerKingdomId];
+  if(!courtGuest || courtGuest.acted.betrothal || kd.spouse || courtGuest.sourceKingdomId===null) return;
+  courtGuest.acted.betrothal = true;
+  const chance = clamp(0.3 + effDiplomacy(kd)*0.05 + (kd.reputation-50)*0.004, 0.1, 0.9);
+  if(Math.random() < chance){
+    kd.spouse = { name: courtGuest.name, male: courtGuest.male };
+    kd.prestige += 15;
+    kd.reputation = clamp(kd.reputation+5, 0, 100);
+    log(`${kd.ruler.name} weds ${courtGuest.name} of House ${kingdoms[courtGuest.sourceKingdomId].house}, sealing an alliance!`, "gold-event");
+  } else {
+    kd.prestige = Math.max(0, kd.prestige-2);
+    kd.reputation = clamp(kd.reputation-1, 0, 100);
+    log(`${courtGuest.name} politely declines the marriage proposal.`, "");
+  }
+  renderCourt();
+};
 // ---------- PATHFINDING ----------
 function bfsPath(startKey, endKey){
   if(startKey===endKey) return [];
@@ -725,15 +1005,17 @@ function moveArmies(){
 
     const enemyArmies = armiesAt(nextKey).filter(a=>a.kingdomId!==army.kingdomId && a.troops>0);
     const attackerKd = kingdoms[army.kingdomId];
+    const atkMartial = effMartial(attackerKd);
 
     if(enemyArmies.length>0){
       const defenderKd = kingdoms[enemyArmies[0].kingdomId];
+      const defMartial = effMartial(defenderKd);
       const totalDefTroops = enemyArmies.reduce((s,a)=>s+a.troops,0);
       const terrainDef = TERRAINS[tile.terrain].defense;
-      const defPower = totalDefTroops * terrainDef * (1+defenderKd.ruler.martial*0.045) * rand(0.85,1.15);
-      const atkPower = army.troops * (1+attackerKd.ruler.martial*0.045) * rand(0.85,1.15);
+      const defPower = totalDefTroops * terrainDef * (1+defMartial*0.045) * rand(0.85,1.15);
+      const atkPower = army.troops * (1+atkMartial*0.045) * rand(0.85,1.15);
       if(atkPower > defPower){
-        const survivors = Math.max(3, Math.round(army.troops - defPower/(1+attackerKd.ruler.martial*0.045)));
+        const survivors = Math.max(3, Math.round(army.troops - defPower/(1+atkMartial*0.045)));
         enemyArmies.forEach(a=>{ a.troops = 0; });
         army.troops = survivors;
         army.q = next.q; army.r = next.r;
@@ -745,7 +1027,11 @@ function moveArmies(){
           tile.population = Math.max(40, tile.population*0.92);
           attackerKd.prestige += 10;
           attackerKd.victories += 1;
-          if(priorOwner!==null) kingdoms[priorOwner].prestige = Math.max(0, kingdoms[priorOwner].prestige-4);
+          attackerKd.reputation = clamp(attackerKd.reputation+0.5, 0, 100);
+          if(priorOwner!==null){
+            kingdoms[priorOwner].prestige = Math.max(0, kingdoms[priorOwner].prestige-4);
+            kingdoms[priorOwner].reputation = clamp(kingdoms[priorOwner].reputation-0.5, 0, 100);
+          }
           log(`${attackerKd.house}'s army crushed a defending force and seized a territory` + (defenderKd? ` from House ${defenderKd.house}.` : "."), "war-event");
           handleCapitalStatus(nextKey, priorOwner, army.kingdomId);
           checkFallen(priorOwner);
@@ -753,18 +1039,19 @@ function moveArmies(){
           log(`${attackerKd.house}'s army destroyed an invading force from House ${defenderKd.house}.`, "war-event");
         }
       } else {
-        army.troops = Math.max(0, Math.round(army.troops - defPower/(1+attackerKd.ruler.martial*0.045)));
+        army.troops = Math.max(0, Math.round(army.troops - defPower/(1+atkMartial*0.045)));
         army.path = [];
         log(`${attackerKd.house}'s army was destroyed attacking House ${defenderKd.house}.`, "war-event");
       }
     } else if(tile.owner !== army.kingdomId){
       const defenderKd = tile.owner!==null ? kingdoms[tile.owner] : null;
+      const defMartial = defenderKd ? effMartial(defenderKd) : 3;
       const terrainDef = TERRAINS[tile.terrain].defense;
       const localLevy = localDefenders(tile);
-      const defPower = localLevy * terrainDef * (1+(defenderKd?defenderKd.ruler.martial:3)*0.03) * rand(0.85,1.15);
-      const atkPower = army.troops * (1+attackerKd.ruler.martial*0.045) * rand(0.85,1.15);
+      const defPower = localLevy * terrainDef * (1+defMartial*0.03) * rand(0.85,1.15);
+      const atkPower = army.troops * (1+atkMartial*0.045) * rand(0.85,1.15);
       if(atkPower > defPower){
-        const survivors = Math.max(3, Math.round(army.troops - defPower/(1+attackerKd.ruler.martial*0.045)));
+        const survivors = Math.max(3, Math.round(army.troops - defPower/(1+atkMartial*0.045)));
         const priorOwner = tile.owner;
         tile.owner = army.kingdomId;
         tile.population = Math.max(40, tile.population*0.95);
@@ -774,12 +1061,16 @@ function moveArmies(){
         mergeAtDestination(army);
         attackerKd.prestige += 10;
         attackerKd.victories += 1;
-        if(priorOwner!==null) kingdoms[priorOwner].prestige = Math.max(0, kingdoms[priorOwner].prestige-4);
+        attackerKd.reputation = clamp(attackerKd.reputation+0.5, 0, 100);
+        if(priorOwner!==null){
+          kingdoms[priorOwner].prestige = Math.max(0, kingdoms[priorOwner].prestige-4);
+          kingdoms[priorOwner].reputation = clamp(kingdoms[priorOwner].reputation-0.5, 0, 100);
+        }
         log(`${attackerKd.house} forces have seized a territory` + (defenderKd? ` from House ${defenderKd.house}.` : "."), "war-event");
         handleCapitalStatus(nextKey, priorOwner, army.kingdomId);
         checkFallen(priorOwner);
       } else {
-        army.troops = Math.max(1, Math.round(army.troops - defPower/(1+attackerKd.ruler.martial*0.045)));
+        army.troops = Math.max(1, Math.round(army.troops - defPower/(1+atkMartial*0.045)));
         army.path = [];
         log(`${attackerKd.house}'s advance was repelled by local levies` + (defenderKd?` of House ${defenderKd.house}.`:"."), "war-event");
       }
@@ -837,7 +1128,9 @@ function aiTurn(){
       for(const t of nbs){
         const enemies = armiesAt(key(t.q,t.r)).filter(a=>a.kingdomId!==kd.id);
         const defTroops = enemies.length ? enemies.reduce((s,a)=>s+a.troops,0) : localDefenders(t);
-        const score = army.troops - defTroops*TERRAINS[t.terrain].defense;
+        const targetKd = t.owner!==null ? kingdoms[t.owner] : null;
+        const repDeterrence = targetKd ? (targetKd.reputation-50)*0.15 : 0;
+        const score = army.troops - defTroops*TERRAINS[t.terrain].defense - repDeterrence;
         if(score > bestScore){ bestScore = score; best = t; }
       }
       if(best && bestScore > -20){
@@ -866,17 +1159,24 @@ function gameTick(){
   tick += 1;
   tickEconomy();
   tickAging();
+  tickFamily();
+  tickEducation();
+  tickCourtGuest();
+  tickMinisterCandidates();
   aiRebuildCapitals();
   aiTurn();
   moveArmies();
   updateSidebar();
   draw();
+  if(sidePanelOpen && sideTab==="court") renderCourt();
 }
 
 function endTurn(){
   if(gameOver) return;
   hideActionBar();
-  selectedArmyId = null;
+  selectedArmyIds = [];
+  pendingWaypoints = [];
+  routeMode = false;
   gameTick();
 }
 
@@ -918,6 +1218,64 @@ function zoomBy(factor, pivotX, pivotY){
   draw();
 }
 
+function handleTouchStart(e){
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  if(e.touches.length===1){
+    touchMode = "pan";
+    dragMoved = false;
+    dragStartX = e.touches[0].clientX; dragStartY = e.touches[0].clientY;
+    camStartX = camX; camStartY = camY;
+  } else if(e.touches.length>=2){
+    touchMode = "pinch";
+    const t0 = e.touches[0], t1 = e.touches[1];
+    pinchStartDist = Math.hypot(t1.clientX-t0.clientX, t1.clientY-t0.clientY) || 1;
+    pinchStartZoom = zoom;
+    const midX = (t0.clientX+t1.clientX)/2 - rect.left;
+    const midY = (t0.clientY+t1.clientY)/2 - rect.top;
+    pinchWorldX = (midX - camX)/zoom;
+    pinchWorldY = (midY - camY)/zoom;
+  }
+}
+
+function handleTouchMove(e){
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  if(touchMode==="pan" && e.touches.length===1){
+    const dx = e.touches[0].clientX - dragStartX, dy = e.touches[0].clientY - dragStartY;
+    if(Math.abs(dx)>4 || Math.abs(dy)>4) dragMoved = true;
+    camX = camStartX + dx; camY = camStartY + dy;
+    draw();
+  } else if(touchMode==="pinch" && e.touches.length>=2){
+    const t0 = e.touches[0], t1 = e.touches[1];
+    const dist = Math.hypot(t1.clientX-t0.clientX, t1.clientY-t0.clientY) || 1;
+    zoom = clamp(pinchStartZoom * (dist/pinchStartDist), MIN_ZOOM, MAX_ZOOM);
+    const midX = (t0.clientX+t1.clientX)/2 - rect.left;
+    const midY = (t0.clientY+t1.clientY)/2 - rect.top;
+    camX = midX - pinchWorldX*zoom;
+    camY = midY - pinchWorldY*zoom;
+    dragMoved = true;
+    draw();
+  }
+}
+
+function handleTouchEnd(e){
+  if(e.touches.length===0){
+    if(touchMode==="pan" && !dragMoved){
+      const rect = canvas.getBoundingClientRect();
+      const ct = e.changedTouches && e.changedTouches[0];
+      if(ct) handleTapAt(ct.clientX - rect.left, ct.clientY - rect.top);
+    }
+    touchMode = null;
+  } else if(e.touches.length===1){
+    // dropped from a pinch down to one finger — rebase so it doesn't jump or register as a tap
+    touchMode = "pan";
+    dragMoved = true;
+    dragStartX = e.touches[0].clientX; dragStartY = e.touches[0].clientY;
+    camStartX = camX; camStartY = camY;
+  }
+}
+
 function draw(){
   ctx.clearRect(0,0,W,H);
   ctx.save();
@@ -947,6 +1305,33 @@ function draw(){
     }
   }
 
+  // player territory outline — black, drawn only along the outer edge of owned land
+  const OWN_EDGE_MAP = [
+    {dq:1,dr:0, c:[0,1]},
+    {dq:0,dr:1, c:[1,2]},
+    {dq:-1,dr:1, c:[2,3]},
+    {dq:-1,dr:0, c:[3,4]},
+    {dq:0,dr:-1, c:[4,5]},
+    {dq:1,dr:-1, c:[5,0]}
+  ];
+  ctx.strokeStyle = "#000000";
+  ctx.lineWidth = 3;
+  for(const t of Object.values(tiles)){
+    if(t.owner!==playerKingdomId) continue;
+    const corners = hexCorners(t.x,t.y);
+    OWN_EDGE_MAP.forEach(edge=>{
+      const nk = key(t.q+edge.dq, t.r+edge.dr);
+      const neighborOwned = tiles[nk] && tiles[nk].owner===playerKingdomId;
+      if(!neighborOwned){
+        const [i,j] = edge.c;
+        ctx.beginPath();
+        ctx.moveTo(corners[i][0], corners[i][1]);
+        ctx.lineTo(corners[j][0], corners[j][1]);
+        ctx.stroke();
+      }
+    });
+  }
+
   // capital markers (active = gold dot, lost = ruined red X at original site)
   kingdoms.forEach(kd=>{
     const capTile = tiles[kd.capitalKey];
@@ -970,9 +1355,9 @@ function draw(){
     }
   });
 
-  // pending path preview for the selected army
-  if(selectedArmyId){
-    const army = findArmyById(selectedArmyId);
+  // pending path preview for all selected armies
+  selectedArmyIds.forEach(id=>{
+    const army = findArmyById(id);
     if(army){
       const t0 = tiles[key(army.q,army.r)];
       ctx.beginPath();
@@ -983,24 +1368,65 @@ function draw(){
       ctx.stroke();
       ctx.setLineDash([]);
     }
+  });
+
+  // waypoint route being built (route mode)
+  if(pendingWaypoints.length>0 && selectedArmyIds.length>0){
+    const refArmy = findArmyById(selectedArmyIds[0]);
+    if(refArmy){
+      let prev = tiles[key(refArmy.q, refArmy.r)];
+      ctx.strokeStyle = "#f2d477";
+      ctx.lineWidth = 3;
+      ctx.setLineDash([2,6]);
+      ctx.lineCap = "round";
+      pendingWaypoints.forEach(wpKey=>{
+        const t = tiles[wpKey];
+        if(!t) return;
+        ctx.beginPath();
+        ctx.moveTo(prev.x, prev.y);
+        ctx.lineTo(t.x, t.y);
+        ctx.stroke();
+        prev = t;
+      });
+      ctx.setLineDash([]);
+      ctx.lineCap = "butt";
+      pendingWaypoints.forEach((wpKey,i)=>{
+        const t = tiles[wpKey];
+        if(!t) return;
+        ctx.beginPath();
+        ctx.arc(t.x, t.y, 10, 0, Math.PI*2);
+        ctx.fillStyle = "#f2d477";
+        ctx.fill();
+        ctx.strokeStyle = "#3a2c12";
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        ctx.font = "bold 11px 'Cinzel', serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = "#3a2c12";
+        ctx.fillText(String(i+1), t.x, t.y);
+      });
+    }
   }
 
-  // army march paths
+  // army march paths — white through own territory, red through enemy/other territory
   kingdoms.forEach(kd=>{
     kd.armies.forEach(a=>{
       if(a.path && a.path.length){
-        let cur = tiles[key(a.q,a.r)];
-        ctx.beginPath();
-        ctx.moveTo(cur.x, cur.y);
+        let curTile = tiles[key(a.q,a.r)];
         for(const step of a.path){
           const st = tiles[key(step.q,step.r)];
+          const own = st.owner === a.kingdomId;
+          ctx.beginPath();
+          ctx.moveTo(curTile.x, curTile.y);
           ctx.lineTo(st.x, st.y);
+          ctx.strokeStyle = own ? "rgba(255,255,255,0.95)" : "rgba(224,32,32,0.95)";
+          ctx.lineWidth = 3.5;
+          ctx.setLineDash([7,4]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          curTile = st;
         }
-        ctx.strokeStyle = "rgba(120,20,20,0.45)";
-        ctx.lineWidth = 2;
-        ctx.setLineDash([5,4]);
-        ctx.stroke();
-        ctx.setLineDash([]);
       }
     });
   });
@@ -1112,7 +1538,7 @@ function confirmSplit(){
   const newArmy = splitArmy(army, n);
   closeSplitModal();
   if(newArmy){
-    selectedArmyId = newArmy.id;
+    selectedArmyIds = [newArmy.id];
     selectedKey = key(newArmy.q, newArmy.r);
     hideActionBar();
   }
@@ -1138,6 +1564,7 @@ function updateSidebar(){
   document.getElementById("statGold").textContent = Math.floor(kd.gold);
   document.getElementById("statProvinces").textContent = provincesOf(kd.id).length;
   document.getElementById("statVictories").textContent = kd.victories;
+  document.getElementById("statReputation").textContent = Math.round(kd.reputation);
   document.getElementById("statPrestige").textContent = Math.floor(kd.prestige);
 
   renderKingdomList();
@@ -1153,7 +1580,7 @@ function renderKingdomList(){
     div.className = "statline";
     const provCount = provincesOf(kd.id).length;
     const totalTroops = Math.floor(kd.armies.reduce((s,a)=>s+a.troops,0));
-    div.innerHTML = `<span><span class="swatch" style="background:${kd.color}"></span>${kd.isPlayer?"<b>You</b> — ":""}House ${kd.house}${kd.alive?"":" (fallen)"}</span><b>${provCount} land${provCount===1?"":"s"} · ${kd.armies.length} stacks · ${totalTroops} troops</b>`;
+    div.innerHTML = `<span><span class="swatch" style="background:${kd.color}"></span>${kd.isPlayer?"<b>You</b> — ":""}House ${kd.house}${kd.alive?"":" (fallen)"}</span><b>${provCount} land${provCount===1?"":"s"} · ${kd.armies.length} stacks · ${totalTroops} troops · Rep ${Math.round(kd.reputation)}</b>`;
     el.appendChild(div);
   });
 }
@@ -1214,7 +1641,6 @@ function renderSelInfo(){
 function setSidePanel(open){
   sidePanelOpen = open;
   document.getElementById("app").classList.toggle("side-collapsed", !open);
-  document.getElementById("sideToggleTab").textContent = "☰";
   updateCanvasSize();
   draw();
 }
@@ -1223,62 +1649,413 @@ function toggleSidePanel(){
   setSidePanel(!sidePanelOpen);
 }
 
+// ---------- SIDE PANEL TABS: Dynasty / Court ----------
+function setSideTab(tabName){
+  if(sidePanelOpen && sideTab===tabName){
+    setSidePanel(false);
+    return;
+  }
+  sideTab = tabName;
+  if(!sidePanelOpen) setSidePanel(true);
+  document.querySelectorAll(".sideTabBtn").forEach(b=>{
+    b.classList.toggle("active", b.dataset.tab===sideTab);
+  });
+  document.getElementById("sideDynastyContent").style.display = sideTab==="dynasty" ? "block" : "none";
+  document.getElementById("sideCourtContent").style.display = sideTab==="court" ? "block" : "none";
+  if(sideTab==="court") renderCourt();
+}
+
+function setCourtTab(tabName){
+  courtTab = tabName;
+  renderCourt();
+}
+
+function renderCourt(){
+  if(sideTab!=="court") return;
+  document.querySelectorAll(".courtTabBtn").forEach(b=>{
+    b.classList.toggle("active", b.dataset.tab===courtTab);
+  });
+  drawHallCanvas();
+  const el = document.getElementById("courtContent");
+  if(courtTab==="family") el.innerHTML = renderCourtFamily();
+  else if(courtTab==="cabinet") el.innerHTML = renderCourtCabinet();
+  else el.innerHTML = renderCourtGuests();
+}
+
+function renderCourtFamily(){
+  const kd = kingdoms[playerKingdomId];
+  let html = `<div class="courtRow"><span>👑 ${kd.ruler.name} — ${kd.ruler.male?"King":"Queen"} of House ${kd.house}, age ${Math.round(kd.ruler.age)}</span></div>`;
+  if(kd.spouse){
+    html += `<div class="courtRow"><span>💍 Spouse: <b>${kd.spouse.name}</b></span></div>`;
+  } else {
+    html += `<div class="courtRow"><span>Unmarried — no spouse at present.</span><button class="courtBtn" onclick="window.courtArrangeMarriage()">Arrange Marriage</button></div>`;
+  }
+  html += `<h3 style="font-family:'Cinzel',serif;color:var(--blood);font-size:14px;margin:14px 0 6px;">Children</h3>`;
+  if(kd.children.length===0){
+    html += `<div class="courtEmpty">No children yet. A spouse is needed before the royal family can grow.</div>`;
+  } else {
+    const statLabels = [["martial","Martial"],["diplomacy","Diplomacy"],["stewardship","Stewardship"],["intrigue","Intrigue"]];
+    kd.children.slice().sort((a,b)=>b.age-a.age).forEach(c=>{
+      const eligible = c.age>=16;
+      html += `<div class="courtRow" style="flex-direction:column;align-items:stretch;">`;
+      html += `<div style="display:flex;justify-content:space-between;"><span>${c.male?"👦":"👧"} <b>${c.name}</b>, age ${c.age} ${eligible?"— of age to inherit":"— too young to inherit"}</span><span>M${Math.round(c.martial)} D${Math.round(c.diplomacy)} S${Math.round(c.stewardship)} I${Math.round(c.intrigue)}</span></div>`;
+      if(!eligible){
+        html += `<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;">`;
+        html += `<span style="font-size:11.5px;color:var(--ink-soft);">Tutor (${TUTOR_COST} gold/turn):</span>`;
+        statLabels.forEach(([key,label])=>{
+          const active = c.tutorFocus===key;
+          html += `<button class="courtBtn ${active?"":"secondary"}" style="font-size:11px;padding:5px 9px;" onclick="window.courtSetTutorFocus('${c.id}','${key}')">${label}</button>`;
+        });
+        if(c.tutorFocus){
+          html += `<button class="courtBtn secondary" style="font-size:11px;padding:5px 9px;" onclick="window.courtStopTutoring('${c.id}')">Stop</button>`;
+        }
+        html += `</div>`;
+      }
+      html += `</div>`;
+    });
+  }
+  html += `<div style="font-size:12px;color:var(--ink-soft);margin-top:10px;">Your eldest child aged 16+ inherits the throne automatically when you pass. With no eligible heir, a distant cousin takes the crown instead. Tutoring a child's stat costs gold each turn but steadily raises it before they come of age.</div>`;
+  return html;
+}
+
+function renderCourtCabinet(){
+  const kd = kingdoms[playerKingdomId];
+  let html = "";
+  MINISTER_ROLES.forEach(role=>{
+    const m = kd.ministers[role.key];
+    html += `<h3 style="font-family:'Cinzel',serif;color:var(--blood);font-size:14px;margin:12px 0 6px;">${role.icon} ${role.label}</h3>`;
+    html += `<div style="font-size:12px;color:var(--ink-soft);margin-bottom:6px;">${role.desc}</div>`;
+    if(m){
+      html += `<div class="courtRow"><span><b>${m.name}</b> — Skill ${m.skill}, upkeep ${m.upkeep} gold/turn</span><button class="courtBtn secondary" onclick="window.courtDismissMinister('${role.key}')">Dismiss</button></div>`;
+    } else {
+      const cands = kd.ministerCandidates;
+      if(cands.length===0){
+        html += `<div class="courtEmpty">No candidates available at court right now — check back next turn.</div>`;
+      } else {
+        cands.forEach((c,idx)=>{
+          const cost = c.skill*15;
+          const affordable = kd.gold>=cost;
+          html += `<div class="courtCandidate"><span>${c.name} — Skill ${c.skill} (hire: ${cost} gold, upkeep ${Math.round(c.skill*1.5)}/turn)</span><button class="courtBtn" ${affordable?"":"disabled"} onclick="window.courtHireMinister('${role.key}',${idx})">Appoint</button></div>`;
+        });
+      }
+    }
+  });
+  return html;
+}
+
+function renderCourtGuests(){
+  const kd = kingdoms[playerKingdomId];
+  if(!courtGuest){
+    return `<div class="courtEmpty">No one is currently visiting the court. Travelers arrive unannounced from time to time — check back in future turns.</div>`;
+  }
+  const g = courtGuest;
+  const origin = g.sourceKingdomId!==null ? `House ${kingdoms[g.sourceKingdomId].house}` : "a distant land";
+  const turnsLeft = g.departTick - tick;
+  let html = `<div class="courtRow"><span>${g.male?"🧔":"👩"} <b>${g.name}</b> of ${origin} — bearing ${g.gift}</span><span>${turnsLeft} turn${turnsLeft===1?"":"s"} left</span></div>`;
+  html += `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;">`;
+  html += `<button class="courtBtn" ${g.acted.gift?"disabled":""} onclick="window.courtAcceptGift()">Accept Gift (+${g.giftValue} gold)</button>`;
+  html += `<button class="courtBtn" ${g.acted.trade?"disabled":""} onclick="window.courtTradeDeal()">Propose Trade Deal</button>`;
+  const canBetroth = !kd.spouse && g.sourceKingdomId!==null && !g.acted.betrothal;
+  html += `<button class="courtBtn" ${canBetroth?"":"disabled"} onclick="window.courtProposeBetrothal()">Propose Marriage Alliance</button>`;
+  html += `</div>`;
+  if(kd.spouse) html += `<div style="font-size:12px;color:var(--ink-soft);margin-top:8px;">Already married — no marriage proposal is possible.</div>`;
+  return html;
+}
+
+window.courtArrangeMarriage = function(){
+  tryArrangeMarriage(kingdoms[playerKingdomId]);
+  renderCourt();
+  updateSidebar();
+};
+window.courtSetTutorFocus = function(childId, statKey){
+  const child = kingdoms[playerKingdomId].children.find(c=>c.id===childId);
+  if(!child) return;
+  child.tutorFocus = statKey;
+  renderCourt();
+};
+window.courtStopTutoring = function(childId){
+  const child = kingdoms[playerKingdomId].children.find(c=>c.id===childId);
+  if(!child) return;
+  child.tutorFocus = null;
+  renderCourt();
+};
+window.courtHireMinister = function(roleKey, idx){
+  hireCandidateMinister(kingdoms[playerKingdomId], roleKey, idx);
+  renderCourt();
+  updateSidebar();
+};
+window.courtDismissMinister = function(roleKey){
+  dismissMinister(kingdoms[playerKingdomId], roleKey);
+  renderCourt();
+  updateSidebar();
+};
+
+function drawHallCanvas(){
+  const hc = document.getElementById("hallCanvas");
+  const hctx = hc.getContext("2d");
+  const w = hc.width, h = hc.height;
+  hctx.clearRect(0,0,w,h);
+
+  // floor
+  const grad = hctx.createLinearGradient(0,0,0,h);
+  grad.addColorStop(0,"#4a3826");
+  grad.addColorStop(1,"#2a1d10");
+  hctx.fillStyle = grad;
+  hctx.fillRect(0,0,w,h);
+
+  // carpet runway to throne
+  hctx.fillStyle = "#7a1f2b";
+  hctx.fillRect(w*0.5-w*0.09, h*0.16, w*0.18, h*0.84);
+  hctx.strokeStyle = "#c99a35";
+  hctx.lineWidth = 1.5;
+  hctx.strokeRect(w*0.5-w*0.09, h*0.16, w*0.18, h*0.84);
+
+  const kd = kingdoms[playerKingdomId];
+
+  // throne + king/queen
+  const tx = w*0.5, ty = h*0.20;
+  hctx.fillStyle = "#5a4326";
+  hctx.fillRect(tx-w*0.11, ty-h*0.05, w*0.22, h*0.24);
+  hctx.fillStyle = "#c99a35";
+  hctx.fillRect(tx-w*0.11, ty-h*0.05, w*0.22, h*0.035);
+  drawFigure(hctx, tx, ty+h*0.13, kd ? kd.color : "#a97c1f", w*0.05, kd? kd.ruler.name : "Ruler");
+
+  // spouse beside throne, if any
+  if(kd && kd.spouse){
+    drawFigure(hctx, tx+w*0.19, ty+h*0.15, "#8a5a3f", w*0.04, kd.spouse.name);
+  }
+
+  // ministers seated across the middle
+  const roleSeats = [ [w*0.13,h*0.62], [w*0.36,h*0.72], [w*0.62,h*0.62], [w*0.85,h*0.72] ];
+  MINISTER_ROLES.forEach((role,i)=>{
+    const m = kd.ministers[role.key];
+    const [sx,sy] = roleSeats[i];
+    if(m){
+      drawFigure(hctx, sx, sy, "#3e5266", w*0.04, role.icon+" "+m.name);
+    } else {
+      drawEmptyChair(hctx, sx, sy, w*0.04);
+    }
+  });
+
+  // guest seated at the foot of the carpet, before the throne
+  if(courtGuest){
+    drawFigure(hctx, w*0.5, h*0.94, "#6b3f6b", w*0.045, courtGuest.name);
+  } else {
+    drawEmptyChair(hctx, w*0.5, h*0.94, w*0.04);
+  }
+}
+
+function drawFigure(hctx, x, y, color, size, label){
+  hctx.beginPath();
+  hctx.arc(x, y-size, size*0.55, 0, Math.PI*2);
+  hctx.fillStyle = "#e8c9a0";
+  hctx.fill();
+  hctx.strokeStyle = "#2b2015"; hctx.lineWidth=1; hctx.stroke();
+  hctx.beginPath();
+  hctx.moveTo(x-size*0.9, y+size*1.2);
+  hctx.lineTo(x+size*0.9, y+size*1.2);
+  hctx.lineTo(x+size*0.6, y-size*0.2);
+  hctx.lineTo(x-size*0.6, y-size*0.2);
+  hctx.closePath();
+  hctx.fillStyle = color;
+  hctx.fill();
+  hctx.strokeStyle = "#1a140d"; hctx.stroke();
+  if(label){
+    hctx.font = "9px 'Crimson Text', serif";
+    hctx.textAlign = "center";
+    hctx.fillStyle = "#f4e9c9";
+    const shortLabel = label.length>14 ? label.slice(0,13)+"…" : label;
+    hctx.fillText(shortLabel, x, y+size*1.2+11);
+  }
+}
+
+function drawEmptyChair(hctx, x, y, size){
+  size = size || 14;
+  hctx.strokeStyle = "rgba(200,180,140,0.4)";
+  hctx.lineWidth = 1.5;
+  hctx.setLineDash([3,3]);
+  hctx.strokeRect(x-size, y-size, size*2, size*2.4);
+  hctx.setLineDash([]);
+  hctx.font = "9px 'Crimson Text', serif";
+  hctx.textAlign = "center";
+  hctx.fillStyle = "rgba(200,180,140,0.7)";
+  hctx.fillText("vacant", x, y+size*2.4+2);
+}
+
 // ---------- INTERACTION ----------
 function onCanvasClick(evt){
   if(gameOver) return;
   if(dragMoved){ dragMoved=false; return; }
   const rect = canvas.getBoundingClientRect();
-  const sx = evt.clientX - rect.left;
-  const sy = evt.clientY - rect.top;
+  handleTapAt(evt.clientX - rect.left, evt.clientY - rect.top);
+}
+
+function handleTapAt(sx, sy){
+  if(gameOver) return;
+
   const x = (sx - camX) / zoom;
   const y = (sy - camY) / zoom;
   const {q,r} = pixelToAxial(x,y);
   const k = key(q,r);
-  if(!tiles[k]){ hideActionBar(); selectedKey=null; selectedArmyId=null; draw(); renderSelInfo(); return; }
+  if(!tiles[k]){ hideActionBar(); selectedKey=null; selectedArmyIds=[]; pendingWaypoints=[]; routeMode=false; draw(); renderSelInfo(); return; }
 
   if(kingdoms.some(kd=>kd.capitalKey===k)){
     toggleSidePanel();
   }
 
-  if(selectedArmyId){
-    const army = findArmyById(selectedArmyId);
-    if(army && (army.q!==q || army.r!==r)){
-      const path = bfsPath(key(army.q,army.r), k);
-      if(path && path.length){
-        showActionBar(army, k, path);
+  // If army(s) are already selected, this tap is about the march, not about
+  // whatever troops happen to be standing on the tapped tile.
+  if(selectedArmyIds.length>0){
+    const selectedHere = selectedArmyIds.map(id=>findArmyById(id)).find(a=>a && a.q===q && a.r===r);
+    if(selectedHere){
+      // tapping the tile of an already-selected stack cancels its march order
+      selectedArmyIds = selectedArmyIds.filter(id=>id!==selectedHere.id);
+      pendingWaypoints = [];
+      hideActionBar();
+      if(selectedArmyIds.length===0){ routeMode=false; }
+      selectedKey = k;
+      draw();
+      renderSelInfo();
+      return;
+    }
+
+    if(multiSelectMode){
+      const friendlyHere = armiesAt(k).find(a=>a.kingdomId===playerKingdomId);
+      if(friendlyHere){
+        // still building the multi-select group — add this stack rather than marching yet
+        selectedArmyIds.push(friendlyHere.id);
+        selectedKey = k;
+        draw();
+        renderSelInfo();
         return;
       }
     }
-    selectedArmyId = null;
-    hideActionBar();
+
+    if(routeMode){
+      const refArmy = findArmyById(selectedArmyIds[0]);
+      const originKey = pendingWaypoints.length ? pendingWaypoints[pendingWaypoints.length-1] : key(refArmy.q, refArmy.r);
+      if(originKey !== k){
+        const segment = bfsPath(originKey, k);
+        if(segment && segment.length>0){
+          pendingWaypoints.push(k);
+          updateRouteBar();
+        }
+      }
+      draw();
+      return;
+    }
+    const marchable = [];
+    selectedArmyIds.forEach(id=>{
+      const army = findArmyById(id);
+      if(!army || (army.q===q && army.r===r)) return;
+      const path = bfsPath(key(army.q,army.r), k);
+      if(path && path.length) marchable.push({army, path});
+    });
+    if(marchable.length>0){
+      showActionBar(marchable, k);
+      return;
+    }
   }
 
+  // Nothing selected yet (or nothing marchable above) — decide fresh from what's on this tile
   const here = armiesAt(k).find(a=>a.kingdomId===playerKingdomId);
-  selectedKey = k;
   if(here){
-    selectedArmyId = here.id;
-  } else {
-    selectedArmyId = null;
-    hideActionBar();
+    if(multiSelectMode){
+      selectedArmyIds.push(here.id);
+      selectedKey = k;
+      draw();
+      renderSelInfo();
+      return;
+    }
+    // clicking a stack goes straight into march mode — no extra step
+    selectedArmyIds = [here.id];
+    routeMode = true;
+    selectedKey = k;
+    updateRouteBar();
+    draw();
+    renderSelInfo();
+    return;
   }
+
+  selectedKey = k;
+  selectedArmyIds = [];
+  pendingWaypoints = [];
+  hideActionBar();
   draw();
   renderSelInfo();
 }
 
-function showActionBar(army, destKey, path){
-  pendingPath = {armyId: army.id, path, destKey};
+function updateRouteBar(){
   actionBar.innerHTML = "";
   actionBar.style.display = "flex";
   const span = document.createElement("span");
-  span.textContent = `March ${Math.floor(army.troops)} troops toward this tile? (${path.length} tile${path.length===1?"":"s"} away, moves 1/turn)`;
+  span.textContent = `Building route — ${pendingWaypoints.length} waypoint${pendingWaypoints.length===1?"":"s"} set. Tap more tiles to extend it.`;
+  actionBar.appendChild(span);
+  const btnConfirm = document.createElement("button");
+  btnConfirm.textContent = "Confirm Route";
+  btnConfirm.onclick = confirmRoute;
+  const btnUndo = document.createElement("button");
+  btnUndo.className = "cancel";
+  btnUndo.textContent = "Undo Last";
+  btnUndo.onclick = ()=>{
+    pendingWaypoints.pop();
+    if(pendingWaypoints.length===0){ hideActionBar(); } else { updateRouteBar(); }
+    draw();
+  };
+  const btnCancel = document.createElement("button");
+  btnCancel.className = "cancel";
+  btnCancel.textContent = "Cancel Route";
+  btnCancel.onclick = ()=>{ pendingWaypoints = []; hideActionBar(); draw(); };
+  actionBar.appendChild(btnConfirm);
+  actionBar.appendChild(btnUndo);
+  actionBar.appendChild(btnCancel);
+}
+
+function confirmRoute(){
+  selectedArmyIds.forEach(id=>{
+    const army = findArmyById(id);
+    if(!army) return;
+    let fullPath = [];
+    let cursorKey = key(army.q, army.r);
+    let valid = true;
+    for(const wp of pendingWaypoints){
+      if(wp===cursorKey) continue;
+      const seg = bfsPath(cursorKey, wp);
+      if(!seg || seg.length===0){ valid=false; break; }
+      fullPath = fullPath.concat(seg);
+      cursorKey = wp;
+    }
+    if(valid && fullPath.length>0){
+      army.path = fullPath;
+    }
+  });
+  pendingWaypoints = [];
+  selectedArmyIds = [];
+  selectedKey = null;
+  hideActionBar();
+  draw();
+  renderSelInfo();
+}
+
+function showActionBar(marchable, destKey){
+  pendingPath = { entries: marchable.map(m=>({armyId:m.army.id, path:m.path})), destKey };
+  actionBar.innerHTML = "";
+  actionBar.style.display = "flex";
+  const span = document.createElement("span");
+  const totalTroops = Math.floor(marchable.reduce((s,m)=>s+m.army.troops,0));
+  const maxDist = Math.max(...marchable.map(m=>m.path.length));
+  const stackWord = marchable.length===1 ? "stack" : "stacks";
+  span.textContent = `March ${marchable.length} ${stackWord} (${totalTroops} troops) toward this tile? (up to ${maxDist} tile${maxDist===1?"":"s"} away, moves 1/turn)`;
   actionBar.appendChild(span);
   const btnGo = document.createElement("button");
   btnGo.textContent = "March";
   btnGo.onclick = ()=>{
-    const a = findArmyById(pendingPath.armyId);
-    if(a) a.path = pendingPath.path;
+    pendingPath.entries.forEach(e=>{
+      const a = findArmyById(e.armyId);
+      if(a) a.path = e.path;
+    });
     hideActionBar();
-    selectedArmyId = null;
+    selectedArmyIds = [];
     selectedKey = null;
     draw();
     renderSelInfo();
@@ -1305,15 +2082,18 @@ function showFallen(){
 
 function calcProjectedRates(kd){
   let rawGold = 0, popIncome = 0;
+  const stew = effStewardship(kd);
   for(const t of provincesOf(kd.id)){
-    rawGold += t.population * 0.006 * (1+kd.ruler.stewardship*0.04);
+    rawGold += t.population * 0.006 * (1+stew*0.04);
     popIncome += t.population * 0.004;
   }
   const goldPerTurn = rawGold * (0.5 + (kd.policy/100));
   const recruitBonus = 1 + Math.min(1.5, kd.victories * 0.05);
-  const recruitMultiplier = 0.5 + ((100-kd.policy)/100);
+  const recruitMultiplier = (0.5 + ((100-kd.policy)/100)) * (1 + intrigueBoost(kd)*0.04);
   const troopsPerTurn = popIncome * recruitBonus * RECRUIT_RATE * recruitMultiplier;
-  return {goldPerTurn, troopsPerTurn};
+  let upkeep = 0;
+  Object.values(kd.ministers).forEach(m=>{ if(m) upkeep += m.upkeep; });
+  return {goldPerTurn: goldPerTurn - upkeep, troopsPerTurn};
 }
 
 function updatePolicyLabel(){
@@ -1330,8 +2110,18 @@ function updatePolicyLabel(){
 
 // ---------- INIT / RESTART ----------
 function newGame(){
-  tick = 0; selectedKey=null; selectedArmyId=null; pendingPath=null;
+  tick = 0; selectedKey=null; selectedArmyIds=[]; pendingPath=null; pendingWaypoints=[];
+  multiSelectMode = false; routeMode = false;
+  const msBtn = document.getElementById("btnMultiSelect");
+  if(msBtn){ msBtn.textContent = "Multi-Select: Off"; msBtn.classList.remove("active"); }
   chronicle = []; gameOver=false; armyCounter=0;
+  courtGuest = null; courtTab = "family";
+  sideTab = "dynasty";
+  document.getElementById("sideDynastyContent").style.display = "block";
+  document.getElementById("sideCourtContent").style.display = "none";
+  document.querySelectorAll(".sideTabBtn").forEach(b=>{
+    b.classList.toggle("active", b.dataset.tab==="dynasty");
+  });
   playerKingdomId = 0;
   generateMap();
   growKingdoms(10);
@@ -1379,24 +2169,25 @@ function init(){
     zoomBy(factor, e.clientX-rect.left, e.clientY-rect.top);
   }, {passive:false});
 
-  // --- touch drag to pan (single finger) ---
-  canvas.addEventListener("touchstart", (e)=>{
-    if(e.touches.length!==1) return;
-    isDragging = true; dragMoved = false;
-    dragStartX = e.touches[0].clientX; dragStartY = e.touches[0].clientY;
-    camStartX = camX; camStartY = camY;
-  }, {passive:true});
-  canvas.addEventListener("touchmove", (e)=>{
-    if(!isDragging || e.touches.length!==1) return;
-    const dx = e.touches[0].clientX - dragStartX, dy = e.touches[0].clientY - dragStartY;
-    if(Math.abs(dx)>4 || Math.abs(dy)>4) dragMoved = true;
-    camX = camStartX + dx; camY = camStartY + dy;
-    draw();
-  }, {passive:true});
-  canvas.addEventListener("touchend", ()=>{ isDragging = false; });
+  // --- touch: one finger pans, two fingers pinch-zoom (map only; rest of UI untouched) ---
+  canvas.addEventListener("touchstart", handleTouchStart, {passive:false});
+  canvas.addEventListener("touchmove", handleTouchMove, {passive:false});
+  canvas.addEventListener("touchend", handleTouchEnd, {passive:false});
+  canvas.addEventListener("touchcancel", handleTouchEnd, {passive:false});
 
+  document.getElementById("btnMultiSelect").onclick = ()=>{
+    multiSelectMode = !multiSelectMode;
+    const btn = document.getElementById("btnMultiSelect");
+    btn.textContent = "Multi-Select: " + (multiSelectMode ? "On" : "Off");
+    btn.classList.toggle("active", multiSelectMode);
+  };
   document.getElementById("btnEndTurn").onclick = endTurn;
-  document.getElementById("sideToggleTab").onclick = toggleSidePanel;
+  document.querySelectorAll(".sideTabBtn").forEach(b=>{
+    b.onclick = ()=> setSideTab(b.dataset.tab);
+  });
+  document.querySelectorAll(".courtTabBtn").forEach(b=>{
+    b.onclick = ()=> setCourtTab(b.dataset.tab);
+  });
   document.getElementById("btnZoomIn").onclick = ()=> zoomBy(1.25, W/2, H/2);
   document.getElementById("btnZoomOut").onclick = ()=> zoomBy(1/1.25, W/2, H/2);
   document.getElementById("btnZoomReset").onclick = ()=>{ resetView(); draw(); };
