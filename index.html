@@ -437,7 +437,6 @@ const COLS = 33, ROWS = 25;
 const HEX_SIZE = 30; // fixed world-space hex size; on-screen scale is handled by zoom
 const MAX_STACKS = 5; // number of army stacks each kingdom starts the game with (no hard cap afterward)
 const RECRUIT_COST = 18;
-const RECRUIT_RATE = 0.2/3; // scales population income into recruit-pool growth per turn
 const REBUILD_CAPITAL_COST = 2500;
 const TUTOR_COST = 8;
 let childCounter = 0;
@@ -445,10 +444,10 @@ const NAMES_MALE = ["Aldric","Baldwin","Cedric","Domnall","Edmund","Fenric","God
 const NAMES_FEMALE = ["Adela","Beatrix","Cecily","Edith","Freya","Gisela","Helewise","Ingrid","Judith","Leonor","Matilda","Osanna","Rowena","Sybil","Wynne"];
 const HOUSE_NAMES = ["Ashworth","Blackmoor","Cavendish","Drakemoor","Eastwynd","Fairhollow","Greymantle","Hartwell","Ironvale","Lockhart","Marrow","Norwyn","Oakhurst","Pendragon","Ravensworth","Stormcrest","Thornfield","Vaelric","Wintermere","Yorath"];
 const TERRAINS = {
-  plains:{defense:1.0, color:"rgba(255,255,255,0.0)"},
-  forest:{defense:1.15, color:"rgba(20,60,20,0.18)"},
-  hills:{defense:1.3, color:"rgba(90,70,30,0.20)"},
-  mountains:{defense:1.55, color:"rgba(60,60,70,0.28)"}
+  plains:{defense:1.0, color:"rgba(255,255,255,0.0)", gold:[0.75,1.5], troop:[0.15,0.3]},
+  forest:{defense:1.15, color:"rgba(20,60,20,0.18)", gold:[0.5,1], troop:[0.10,0.2]},
+  hills:{defense:1.3, color:"rgba(90,70,30,0.20)", gold:[0.5,1], troop:[0.15,0.3]},
+  mountains:{defense:1.55, color:"rgba(60,60,70,0.28)", gold:[0.25,0.75], troop:[0.05,0.15]}
 };
 const KINGDOM_COLORS = ["#7a1f2b","#3e5266","#3d4a2f","#6b3f6b","#a97c1f","#5a4a8a","#8a5a3f","#2f6b5e","#8a3a2f","#4a5a2f","#6a2f4a","#3a4a6b"];
 
@@ -538,10 +537,16 @@ function generateMap(){
       const q = c - Math.floor(r/2);
       const {x,y} = axialToPixel(q,r);
       const terrain = Math.random()<0.55 ? "plains" : choice(terrainKeys.slice(1));
+      const t = TERRAINS[terrain];
+      const goldValue = +rand(t.gold[0], t.gold[1]).toFixed(2);
+      const troopValue = +rand(t.troop[0], t.troop[1]).toFixed(2);
+      const goldFrac = (goldValue - t.gold[0]) / (t.gold[1] - t.gold[0]);
       tiles[key(q,r)] = {
         q,r,x,y,terrain,
         owner:null,
-        population: randi(120,320)
+        goldValue, troopValue,
+        defenders: clamp(1 + Math.round(goldFrac*4), 1, 5),
+        disruptedUntil: 0
       };
     }
   }
@@ -656,6 +661,8 @@ function makeKingdom(id, seedKey, isPlayer){
     recruitPool: 0,
     policy: 50,
     capitalLost: false,
+    capitalRebuildTarget: null,
+    capitalRebuildTick: null,
     spouse: null,
     children: [],
     ministers: { war:null, treasury:null, diplomacy:null, intrigue:null },
@@ -689,6 +696,44 @@ function relationLabel(v){
   return "Allied";
 }
 
+function satisfactionLabel(v){
+  if(v>=70) return "Content";
+  if(v>=40) return "Uneasy";
+  if(v>=15) return "Discontent";
+  return "Furious";
+}
+
+function tickCourtSatisfaction(){
+  for(const kd of kingdoms){
+    if(!kd.alive) continue;
+    const drift = (kd.reputation-50)*0.02 - 0.1;
+
+    MINISTER_ROLES.forEach(role=>{
+      const m = kd.ministers[role.key];
+      if(!m) return;
+      if(m.satisfaction===undefined) m.satisfaction = 70;
+      m.satisfaction = clamp(m.satisfaction + drift, 0, 100);
+      if(m.satisfaction < 30){
+        kd.ministers[role.key] = null;
+        kd.courtiers.push({ id:"co"+(++childCounter), name:m.name, male:m.male, skill:m.skill, role:null, satisfaction: m.satisfaction });
+        if(kd.isPlayer) log(`${m.name} resigns as ${role.label}, dissatisfied with your rule, and returns to the Court Circle.`, "war-event");
+      }
+    });
+
+    kd.courtiers.forEach(c=>{
+      if(c.satisfaction===undefined) c.satisfaction = 60;
+      c.satisfaction = clamp(c.satisfaction + drift, 0, 100);
+    });
+    const leaving = kd.courtiers.filter(c=>c.satisfaction<10);
+    if(leaving.length){
+      kd.courtiers = kd.courtiers.filter(c=>c.satisfaction>=10);
+      if(kd.isPlayer){
+        leaving.forEach(c=> log(`${c.name} loses patience and leaves your court for good.`, "war-event"));
+      }
+    }
+  }
+}
+
 function generateMinisterCandidate(){
   const male = Math.random()<0.5;
   return {
@@ -711,7 +756,7 @@ function hireCandidateMinister(kd, roleKey, candidateIdx){
   const hireCost = cand.skill * 15;
   if(kd.gold < hireCost) return false;
   kd.gold -= hireCost;
-  kd.ministers[roleKey] = { name: cand.name, male: cand.male, skill: cand.skill, upkeep: Math.round(cand.skill*1.5) };
+  kd.ministers[roleKey] = { name: cand.name, male: cand.male, skill: cand.skill, upkeep: Math.round(cand.skill*1.5), satisfaction: 70 };
   kd.ministerCandidates.splice(candidateIdx,1);
   if(kd.isPlayer) log(`${cand.name} is appointed ${MINISTER_ROLES.find(r=>r.key===roleKey).label}.`, "gold-event");
   return true;
@@ -721,7 +766,8 @@ function dismissMinister(kd, roleKey){
   const m = kd.ministers[roleKey];
   if(!m) return;
   kd.ministers[roleKey] = null;
-  if(kd.isPlayer) log(`${m.name} is dismissed as ${MINISTER_ROLES.find(r=>r.key===roleKey).label}.`, "");
+  kd.courtiers.push({ id:"co"+(++childCounter), name:m.name, male:m.male, skill:m.skill, role:null, satisfaction: m.satisfaction||50 });
+  if(kd.isPlayer) log(`${m.name} steps down as ${MINISTER_ROLES.find(r=>r.key===roleKey).label} and returns to the Court Circle.`, "");
 }
 
 function tickMinisterCandidates(){
@@ -747,7 +793,7 @@ function provincesOf(kingdomId){
 }
 
 function localDefenders(tile){
-  return clamp(Math.ceil(tile.population/200), 1, 5);
+  return tile.defenders;
 }
 
 function armiesAt(tileKey){
@@ -764,34 +810,36 @@ function armiesAt(tileKey){
 function tickEconomy(){
   for(const kd of kingdoms){
     if(!kd.alive) continue;
-    let goldGain = 0;
-    let popIncome = 0;
     const stew = effStewardship(kd);
+    let baseGold = 0, baseTroops = 0;
     for(const t of provincesOf(kd.id)){
-      t.population = Math.min(900, t.population + rand(0.4,1.6) * (1+stew*0.03));
-      goldGain += t.population * 0.006 * (1+stew*0.04);
-      popIncome += t.population * 0.004;
+      const disrupted = t.disruptedUntil && tick < t.disruptedUntil;
+      const mult = disrupted ? 0.5 : 1;
+      baseGold += t.goldValue * mult;
+      baseTroops += t.troopValue * mult;
     }
-    kd.gold += goldGain * (0.5 + (kd.policy/100));
+    kd.gold += baseGold * (1+stew*0.03) * (0.5 + (kd.policy/100));
     const recruitBonus = 1 + Math.min(1.5, kd.victories * 0.05);
     const recruitMultiplier = (0.5 + ((100-kd.policy)/100)) * (1 + intrigueBoost(kd)*0.04);
-    kd.recruitPool += popIncome * recruitBonus * RECRUIT_RATE * recruitMultiplier;
+    const troopGain = baseTroops * recruitBonus * recruitMultiplier;
 
     let upkeep = 0;
     Object.values(kd.ministers).forEach(m=>{ if(m) upkeep += m.upkeep; });
     kd.gold = Math.max(0, kd.gold - upkeep);
 
-    if(kd.recruitPool >= RECRUIT_COST){
-      kd.recruitPool -= RECRUIT_COST;
-      const homeArmy = kd.armies.find(a => tiles[key(a.q,a.r)] && tiles[key(a.q,a.r)].owner===kd.id);
+    if(!kd.capitalLost && tiles[kd.capitalKey] && tiles[kd.capitalKey].owner===kd.id){
+      const [cq,cr] = kd.capitalKey.split(",").map(Number);
+      const homeArmy = kd.armies.find(a => a.q===cq && a.r===cr);
+      kd.recruitPool += troopGain;
       if(homeArmy){
-        homeArmy.troops += RECRUIT_COST;
-      } else if(!kd.capitalLost && tiles[kd.capitalKey] && tiles[kd.capitalKey].owner===kd.id){
-        const [cq,cr] = kd.capitalKey.split(",").map(Number);
-        kd.armies.push(makeArmy(kd.id, cq, cr, RECRUIT_COST));
-      } else {
-        kd.recruitPool += RECRUIT_COST; // capital lost or no friendly ground to muster on — banked for later
+        homeArmy.troops += kd.recruitPool;
+        kd.recruitPool = 0;
+      } else if(kd.recruitPool >= RECRUIT_COST){
+        kd.armies.push(makeArmy(kd.id, cq, cr, kd.recruitPool));
+        kd.recruitPool = 0;
       }
+    } else {
+      kd.recruitPool += troopGain; // no functioning capital right now — banked for later
     }
   }
 }
@@ -925,7 +973,7 @@ window.courtRetainGuest = function(){
   const cost = 100 + courtGuest.skill*15;
   if(kd.gold < cost) return;
   kd.gold -= cost;
-  kd.courtiers.push({ id:"co"+(++childCounter), name:courtGuest.name, male:courtGuest.male, skill:courtGuest.skill, role:null });
+  kd.courtiers.push({ id:"co"+(++childCounter), name:courtGuest.name, male:courtGuest.male, skill:courtGuest.skill, role:null, satisfaction:60 });
   kd.reputation = clamp(kd.reputation+2, 0, 100);
   adjustRelation(kd, courtGuest.sourceKingdomId, 8);
   log(`${courtGuest.name} accepts a place at your court.`, "gold-event");
@@ -952,7 +1000,7 @@ window.appointCourtier = function(courtierId, roleKey){
   const idx = kd.courtiers.findIndex(c=>c.id===courtierId);
   if(idx<0) return;
   const c = kd.courtiers[idx];
-  kd.ministers[roleKey] = { name:c.name, male:c.male, skill:c.skill, upkeep: Math.round(c.skill*1.5) };
+  kd.ministers[roleKey] = { name:c.name, male:c.male, skill:c.skill, upkeep: Math.round(c.skill*1.5), satisfaction: clamp((c.satisfaction||60)+15,0,100) };
   kd.courtiers.splice(idx,1);
   log(`${c.name} is appointed ${MINISTER_ROLES.find(r=>r.key===roleKey).label}.`, "gold-event");
   renderCourt();
@@ -1091,7 +1139,7 @@ function moveArmies(){
         if(tile.owner !== army.kingdomId){
           const priorOwner = tile.owner;
           tile.owner = army.kingdomId;
-          tile.population = Math.max(40, tile.population*0.92);
+          tile.disruptedUntil = tick + 3;
           attackerKd.prestige += 10;
           attackerKd.victories += 1;
           attackerKd.reputation = clamp(attackerKd.reputation+0.5, 0, 100);
@@ -1123,7 +1171,7 @@ function moveArmies(){
         const survivors = Math.max(3, Math.round(army.troops - defPower/(1+atkMartial*0.045)));
         const priorOwner = tile.owner;
         tile.owner = army.kingdomId;
-        tile.population = Math.max(40, tile.population*0.95);
+        tile.disruptedUntil = tick + 3;
         army.troops = survivors;
         army.q = next.q; army.r = next.r;
         army.path.shift();
@@ -1173,16 +1221,36 @@ function checkFallen(kingdomId){
 
 function aiRebuildCapitals(){
   for(const kd of kingdoms){
-    if(!kd.alive || kd.isPlayer || !kd.capitalLost) continue;
+    if(!kd.alive || kd.isPlayer || !kd.capitalLost || kd.capitalRebuildTarget) continue;
     if(kd.gold < REBUILD_CAPITAL_COST) continue;
     if(Math.random() > 0.25) continue; // don't rebuild instantly, some delay
     const provs = provincesOf(kd.id);
     if(provs.length===0) continue;
-    const best = provs.reduce((a,b)=> b.population>a.population ? b : a, provs[0]);
+    const best = provs.reduce((a,b)=> b.goldValue>a.goldValue ? b : a, provs[0]);
     kd.gold -= REBUILD_CAPITAL_COST;
-    kd.capitalKey = key(best.q, best.r);
-    kd.capitalLost = false;
-    log(`House ${kd.house} rebuilds its capital, restoring recruitment.`, "");
+    kd.capitalRebuildTarget = key(best.q, best.r);
+    kd.capitalRebuildTick = tick + 3;
+    log(`House ${kd.house} begins rebuilding its capital.`, "");
+  }
+}
+
+function tickCapitalRebuild(){
+  for(const kd of kingdoms){
+    if(!kd.alive || !kd.capitalRebuildTarget) continue;
+    const t = tiles[kd.capitalRebuildTarget];
+    if(!t || t.owner!==kd.id){
+      kd.capitalRebuildTarget = null;
+      kd.capitalRebuildTick = null;
+      if(kd.isPlayer) log(`Construction of your new capital collapses — the site was lost.`, "war-event");
+      continue;
+    }
+    if(tick >= kd.capitalRebuildTick){
+      kd.capitalKey = kd.capitalRebuildTarget;
+      kd.capitalLost = false;
+      kd.capitalRebuildTarget = null;
+      kd.capitalRebuildTick = null;
+      log(`House ${kd.house}'s new capital is complete, restoring recruitment.`, kd.isPlayer?"gold-event":"");
+    }
   }
 }
 
@@ -1191,6 +1259,33 @@ function aiTurn(){
   for(const kd of kingdoms){
     if(!kd.alive || kd.isPlayer) continue;
     const idleArmies = kd.armies.filter(a=>a.path.length===0 && a.troops>10);
+
+    // Homeland defense: react if an enemy army is actually standing on our land
+    const invaders = [];
+    kingdoms.forEach(other=>{
+      if(other.id===kd.id || !other.alive) return;
+      other.armies.forEach(a=>{
+        const t = tiles[key(a.q,a.r)];
+        if(t && t.owner===kd.id) invaders.push(a);
+      });
+    });
+    if(invaders.length>0){
+      idleArmies.forEach(army=>{
+        if(Math.random() > 0.7) return;
+        let nearest=null, nearestDist=Infinity;
+        invaders.forEach(inv=>{
+          const at = tiles[key(army.q,army.r)], it = tiles[key(inv.q,inv.r)];
+          const d = Math.hypot(at.x-it.x, at.y-it.y);
+          if(d<nearestDist){ nearestDist=d; nearest=inv; }
+        });
+        if(nearest){
+          const path = bfsPath(key(army.q,army.r), key(nearest.q,nearest.r));
+          if(path && path.length) army.path = path;
+        }
+      });
+      continue; // focus on defending this turn, no new expansion
+    }
+
     for(const army of idleArmies){
       if(Math.random() > 0.35) continue;
       const nbs = neighborsOf(army.q, army.r).map(k=>tiles[k]).filter(t=>t.owner!==kd.id);
@@ -1202,7 +1297,9 @@ function aiTurn(){
         const targetKd = t.owner!==null ? kingdoms[t.owner] : null;
         const repDeterrence = targetKd ? (targetKd.reputation-50)*0.15 : 0;
         const relToTarget = (targetKd && kd.relations) ? (kd.relations[targetKd.id]||0) : 0;
-        const score = army.troops - defTroops*TERRAINS[t.terrain].defense - repDeterrence - relToTarget*0.2;
+        const econBonus = (t.goldValue + t.troopValue*20) * 1.5;
+        const capitalBonus = (targetKd && !targetKd.capitalLost && targetKd.capitalKey===key(t.q,t.r)) ? 40 : 0;
+        const score = army.troops - defTroops*TERRAINS[t.terrain].defense - repDeterrence - relToTarget*0.2 + econBonus + capitalBonus;
         if(score > bestScore){ bestScore = score; best = t; }
       }
       if(best && bestScore > -20){
@@ -1235,7 +1332,9 @@ function gameTick(){
   tickEducation();
   tickCourtGuest();
   tickMinisterCandidates();
+  tickCourtSatisfaction();
   aiRebuildCapitals();
+  tickCapitalRebuild();
   aiTurn();
   moveArmies();
   updateSidebar();
@@ -1562,14 +1661,14 @@ function splitArmy(army, amount){
 
 window.rebuildCapitalHere = function(){
   const kd = kingdoms[playerKingdomId];
-  if(!kd || !kd.capitalLost || !selectedKey) return;
+  if(!kd || !kd.capitalLost || !selectedKey || kd.capitalRebuildTarget) return;
   const t = tiles[selectedKey];
   if(!t || t.owner!==playerKingdomId) return;
   if(kd.gold < REBUILD_CAPITAL_COST) return;
   kd.gold -= REBUILD_CAPITAL_COST;
-  kd.capitalKey = selectedKey;
-  kd.capitalLost = false;
-  log(`House ${kd.house} rebuilds its capital, restoring recruitment.`, "gold-event");
+  kd.capitalRebuildTarget = selectedKey;
+  kd.capitalRebuildTick = tick + 3;
+  log(`Construction begins on a new capital — 3 turns to complete.`, "gold-event");
   renderSelInfo();
   updateSidebar();
   draw();
@@ -1691,20 +1790,31 @@ function renderSelInfo(){
   const playerKd = kingdoms[playerKingdomId];
   let rebuildHtml = "";
   if(t.owner===playerKingdomId && playerKd.capitalLost){
-    if(playerKd.gold >= REBUILD_CAPITAL_COST){
+    if(playerKd.capitalRebuildTarget){
+      const turnsLeft = playerKd.capitalRebuildTick - tick;
+      if(playerKd.capitalRebuildTarget===selectedKey){
+        rebuildHtml = `<hr style="border:none;border-top:1px dotted var(--parchment-shadow);margin:8px 0;">
+          <div style="font-size:12.5px;color:var(--gold);">Your new capital is under construction here — ${turnsLeft} turn${turnsLeft===1?"":"s"} remaining.</div>`;
+      } else {
+        rebuildHtml = `<hr style="border:none;border-top:1px dotted var(--parchment-shadow);margin:8px 0;">
+          <div style="font-size:12.5px;color:var(--ink-soft);">A new capital is already under construction elsewhere (${turnsLeft} turn${turnsLeft===1?"":"s"} left).</div>`;
+      }
+    } else if(playerKd.gold >= REBUILD_CAPITAL_COST){
       rebuildHtml = `<hr style="border:none;border-top:1px dotted var(--parchment-shadow);margin:8px 0;">
-        <div style="font-size:12.5px;color:var(--blood);margin-bottom:6px;">Your capital lies in ruins — recruitment is halted until it is rebuilt.</div>
+        <div style="font-size:12.5px;color:var(--blood);margin-bottom:6px;">Your capital lies in ruins — recruitment is halted until it is rebuilt. Construction takes 3 turns.</div>
         <button onclick="window.rebuildCapitalHere()" style="width:100%;font-family:'Cinzel',serif;font-size:12px;background:var(--blood);color:var(--parchment);border:1px solid var(--gold);padding:8px;border-radius:4px;cursor:pointer;">Rebuild Capital Here (${REBUILD_CAPITAL_COST} gold)</button>`;
     } else {
       rebuildHtml = `<hr style="border:none;border-top:1px dotted var(--parchment-shadow);margin:8px 0;">
-        <div style="font-size:12.5px;color:var(--blood);">Your capital lies in ruins. Rebuilding here costs ${REBUILD_CAPITAL_COST} gold (you have ${Math.floor(playerKd.gold)}).</div>`;
+        <div style="font-size:12.5px;color:var(--blood);">Your capital lies in ruins. Rebuilding here costs ${REBUILD_CAPITAL_COST} gold (you have ${Math.floor(playerKd.gold)}), and takes 3 turns to complete.</div>`;
     }
   }
   el.innerHTML = `
     <div class="statline"><span>Ruler</span><b>${kd?("House "+kd.house):"Unclaimed"}</b></div>
     <div class="statline"><span>Terrain</span><b>${t.terrain}</b></div>
-    <div class="statline"><span>Population</span><b>${Math.floor(t.population)}</b></div>
+    <div class="statline"><span>Gold Income</span><b style="color:var(--gold);">+${t.goldValue}/turn</b></div>
+    <div class="statline"><span>Troop Output</span><b style="color:var(--gold);">+${t.troopValue}/turn</b></div>
     <div class="statline"><span>Local Defenders</span><b>${localDefenders(t)}</b></div>
+    ${t.disruptedUntil && tick < t.disruptedUntil ? `<div class="statline"><span style="color:var(--blood);">Disrupted by conquest</span><b>${t.disruptedUntil-tick} turn${t.disruptedUntil-tick===1?"":"s"} left</b></div>` : ""}
     <hr style="border:none;border-top:1px dotted var(--parchment-shadow);margin:8px 0;">
     ${armyHtml}
     ${rebuildHtml}
@@ -1824,35 +1934,33 @@ function renderCourtFamily(){
 function renderCourtCabinet(){
   const kd = kingdoms[playerKingdomId];
   let html = "";
+  html += `<div style="font-size:12px;color:var(--ink-soft);margin-bottom:8px;">Ministries can only be filled by people already in your Court Circle — retain guests to grow your pool of candidates.</div>`;
   if(kd.courtiers.length>0){
     html += `<h3 style="font-family:'Cinzel',serif;color:var(--blood);font-size:14px;margin:0 0 6px;">Court Circle</h3>`;
-    html += `<div style="font-size:12px;color:var(--ink-soft);margin-bottom:6px;">Guests retained at court. Appoint them to a ministry at no extra cost.</div>`;
     kd.courtiers.forEach(c=>{
-      html += `<div class="courtRow"><span>${c.male?"🧔":"👩"} <b>${c.name}</b> — Skill ${c.skill}</span></div>`;
+      const sLabel = satisfactionLabel(c.satisfaction!==undefined?c.satisfaction:60);
+      const sColor = c.satisfaction>=40 ? "var(--ink-soft)" : "var(--blood)";
+      html += `<div class="courtRow"><span>${c.male?"🧔":"👩"} <b>${c.name}</b> — Skill ${c.skill}</span><span style="color:${sColor};">${sLabel}</span></div>`;
       html += `<div style="display:flex;flex-wrap:wrap;gap:5px;margin:2px 0 8px;">`;
       MINISTER_ROLES.forEach(role=>{
         html += `<button class="courtBtn secondary" style="font-size:11px;padding:5px 8px;" onclick="window.appointCourtier('${c.id}','${role.key}')">${role.icon} ${role.label}</button>`;
       });
       html += `</div>`;
     });
+  } else {
+    html += `<div class="courtEmpty">No one in your Court Circle yet. Retain a departing guest to build your pool of future ministers.</div>`;
   }
   MINISTER_ROLES.forEach(role=>{
     const m = kd.ministers[role.key];
     html += `<h3 style="font-family:'Cinzel',serif;color:var(--blood);font-size:14px;margin:12px 0 6px;">${role.icon} ${role.label}</h3>`;
     html += `<div style="font-size:12px;color:var(--ink-soft);margin-bottom:6px;">${role.desc}</div>`;
     if(m){
-      html += `<div class="courtRow"><span><b>${m.name}</b> — Skill ${m.skill}, upkeep ${m.upkeep} gold/turn</span><button class="courtBtn secondary" onclick="window.courtDismissMinister('${role.key}')">Dismiss</button></div>`;
+      const sLabel = satisfactionLabel(m.satisfaction!==undefined?m.satisfaction:70);
+      const sColor = m.satisfaction>=40 ? "var(--ink-soft)" : "var(--blood)";
+      html += `<div class="courtRow"><span><b>${m.name}</b> — Skill ${m.skill}, upkeep ${m.upkeep} gold/turn</span><span style="color:${sColor};">${sLabel}</span></div>`;
+      html += `<div style="text-align:right;"><button class="courtBtn secondary" onclick="window.courtDismissMinister('${role.key}')">Dismiss</button></div>`;
     } else {
-      const cands = kd.ministerCandidates;
-      if(cands.length===0){
-        html += `<div class="courtEmpty">No candidates available at court right now — check back next turn.</div>`;
-      } else {
-        cands.forEach((c,idx)=>{
-          const cost = c.skill*15;
-          const affordable = kd.gold>=cost;
-          html += `<div class="courtCandidate"><span>${c.name} — Skill ${c.skill} (hire: ${cost} gold, upkeep ${Math.round(c.skill*1.5)}/turn)</span><button class="courtBtn" ${affordable?"":"disabled"} onclick="window.courtHireMinister('${role.key}',${idx})">Appoint</button></div>`;
-        });
-      }
+      html += `<div class="courtEmpty">Vacant — appoint someone from your Court Circle above.</div>`;
     }
   });
   return html;
@@ -2208,20 +2316,40 @@ function showFallen(){
   document.getElementById("fallenOverlay").style.display = "flex";
 }
 
-function calcProjectedRates(kd){
-  let rawGold = 0, popIncome = 0;
+function calcIncomeBreakdown(kd){
   const stew = effStewardship(kd);
-  for(const t of provincesOf(kd.id)){
-    rawGold += t.population * 0.006 * (1+stew*0.04);
-    popIncome += t.population * 0.004;
-  }
-  const goldPerTurn = rawGold * (0.5 + (kd.policy/100));
-  const recruitBonus = 1 + Math.min(1.5, kd.victories * 0.05);
-  const recruitMultiplier = (0.5 + ((100-kd.policy)/100)) * (1 + intrigueBoost(kd)*0.04);
-  const troopsPerTurn = popIncome * recruitBonus * RECRUIT_RATE * recruitMultiplier;
+  let baseGold = 0, baseTroops = 0;
+  provincesOf(kd.id).forEach(t=>{
+    const disrupted = t.disruptedUntil && tick < t.disruptedUntil;
+    const mult = disrupted ? 0.5 : 1;
+    baseGold += t.goldValue * mult;
+    baseTroops += t.troopValue * mult;
+  });
+  const afterStew = baseGold * (1+stew*0.03);
+  const stewBonus = afterStew - baseGold;
+  const afterPolicyGold = afterStew * (0.5 + (kd.policy/100));
+  const policyGoldAdj = afterPolicyGold - afterStew;
   let upkeep = 0;
   Object.values(kd.ministers).forEach(m=>{ if(m) upkeep += m.upkeep; });
-  return {goldPerTurn: goldPerTurn - upkeep, troopsPerTurn};
+  const netGold = afterPolicyGold - upkeep;
+
+  const recruitBonus = 1 + Math.min(1.5, kd.victories * 0.05);
+  const afterVictory = baseTroops * recruitBonus;
+  const victoryBonus = afterVictory - baseTroops;
+  const afterIntrigue = afterVictory * (1 + intrigueBoost(kd)*0.04);
+  const intrigueBonus = afterIntrigue - afterVictory;
+  const afterPolicyTroop = afterIntrigue * (0.5 + ((100-kd.policy)/100));
+  const policyTroopAdj = afterPolicyTroop - afterIntrigue;
+
+  return {
+    baseGold, stewBonus, policyGoldAdj, upkeep, netGold,
+    baseTroops, victoryBonus, intrigueBonus, policyTroopAdj, netTroops: afterPolicyTroop
+  };
+}
+
+function calcProjectedRates(kd){
+  const b = calcIncomeBreakdown(kd);
+  return { goldPerTurn: b.netGold, troopsPerTurn: b.netTroops };
 }
 
 function updatePolicyLabel(){
@@ -2232,8 +2360,22 @@ function updatePolicyLabel(){
   document.getElementById("policySlider").value = kd.policy;
   const label = treasury===50 ? "Balanced — 50 / 50" : `${military}% Military / ${treasury}% Treasury`;
   document.getElementById("policyLabel").textContent = label;
-  const {goldPerTurn, troopsPerTurn} = calcProjectedRates(kd);
-  document.getElementById("policyRates").textContent = `+${goldPerTurn.toFixed(1)} gold/turn · +${troopsPerTurn.toFixed(1)} troops/turn`;
+
+  const b = calcIncomeBreakdown(kd);
+  const fmt = (n)=> (n>=0?"+":"") + n.toFixed(1);
+  document.getElementById("policyRates").innerHTML = `
+    <div style="text-align:left;font-size:11px;line-height:1.6;margin-top:4px;">
+      <div style="display:flex;justify-content:space-between;"><span>Base tile income</span><span>${fmt(b.baseGold)}</span></div>
+      <div style="display:flex;justify-content:space-between;"><span>Stewardship bonus</span><span>${fmt(b.stewBonus)}</span></div>
+      <div style="display:flex;justify-content:space-between;"><span>Policy adjustment</span><span>${fmt(b.policyGoldAdj)}</span></div>
+      <div style="display:flex;justify-content:space-between;"><span>Minister upkeep</span><span>${fmt(-b.upkeep)}</span></div>
+      <div style="display:flex;justify-content:space-between;border-top:1px solid var(--parchment-shadow);margin-top:2px;padding-top:2px;"><b>Net gold/turn</b><b>${fmt(b.netGold)}</b></div>
+      <div style="display:flex;justify-content:space-between;margin-top:6px;"><span>Base troop output</span><span>${fmt(b.baseTroops)}</span></div>
+      <div style="display:flex;justify-content:space-between;"><span>Victory bonus</span><span>${fmt(b.victoryBonus)}</span></div>
+      <div style="display:flex;justify-content:space-between;"><span>Intrigue bonus</span><span>${fmt(b.intrigueBonus)}</span></div>
+      <div style="display:flex;justify-content:space-between;"><span>Policy adjustment</span><span>${fmt(b.policyTroopAdj)}</span></div>
+      <div style="display:flex;justify-content:space-between;border-top:1px solid var(--parchment-shadow);margin-top:2px;padding-top:2px;"><b>Net troops/turn</b><b>${fmt(b.netTroops)}</b></div>
+    </div>`;
 }
 
 // ---------- INIT / RESTART ----------
