@@ -328,6 +328,7 @@
   <div id="sideEdgeTabs">
     <button class="sideTabBtn active" data-tab="dynasty">Dynasty</button>
     <button class="sideTabBtn" data-tab="court">Court</button>
+    <button class="sideTabBtn" data-tab="relations">Relations</button>
   </div>
 
   <div id="side">
@@ -387,6 +388,17 @@
           <button class="courtTabBtn" data-tab="guests">Guests</button>
         </div>
         <div id="courtContent"></div>
+      </div>
+    </div>
+
+    <div id="sideRelationsContent" style="display:none;">
+      <div class="panel">
+        <h2>Household</h2>
+        <div id="relationsHousehold"></div>
+      </div>
+      <div class="panel">
+        <h2>Foreign Relations</h2>
+        <div id="relationsForeign"></div>
       </div>
     </div>
   </div>
@@ -556,6 +568,7 @@ function growKingdoms(numKingdoms){
   kingdoms = seeds.map((seedKey,i)=>makeKingdom(i, seedKey, i===playerKingdomId));
   kingdoms.forEach(kd=>{
     for(let i=0;i<4;i++) kd.ministerCandidates.push(generateMinisterCandidate());
+    kingdoms.forEach(other=>{ if(other.id!==kd.id) kd.relations[other.id] = 0; });
   });
 
   const frontiers = seeds.map(s=>[s]);
@@ -646,7 +659,9 @@ function makeKingdom(id, seedKey, isPlayer){
     spouse: null,
     children: [],
     ministers: { war:null, treasury:null, diplomacy:null, intrigue:null },
-    ministerCandidates: []
+    ministerCandidates: [],
+    courtiers: [],
+    relations: {}
   };
 }
 
@@ -660,6 +675,19 @@ function effMartial(kd){ return kd.ruler.martial + (kd.ministers.war ? kd.minist
 function effStewardship(kd){ return kd.ruler.stewardship + (kd.ministers.treasury ? kd.ministers.treasury.skill*0.5 : 0); }
 function effDiplomacy(kd){ return kd.ruler.diplomacy + (kd.ministers.diplomacy ? kd.ministers.diplomacy.skill*0.5 : 0); }
 function intrigueBoost(kd){ return kd.ministers.intrigue ? kd.ministers.intrigue.skill : 0; }
+
+function adjustRelation(kd, otherId, delta){
+  if(!kd || !kd.relations || otherId===null || otherId===undefined || otherId===kd.id) return;
+  kd.relations[otherId] = clamp((kd.relations[otherId]||0) + delta, -100, 100);
+}
+
+function relationLabel(v){
+  if(v<=-60) return "Hostile";
+  if(v<=-20) return "Cold";
+  if(v<20) return "Neutral";
+  if(v<60) return "Warm";
+  return "Allied";
+}
 
 function generateMinisterCandidate(){
   const male = Math.random()<0.5;
@@ -865,15 +893,9 @@ function tickCourtGuest(){
   const kd = kingdoms[playerKingdomId];
   if(!kd || !kd.alive) return;
   if(courtGuest){
-    if(tick >= courtGuest.departTick){
-      if(!courtGuest.acted.gift && !courtGuest.acted.trade && !courtGuest.acted.betrothal){
-        kd.prestige = Math.max(0, kd.prestige-2);
-        kd.reputation = clamp(kd.reputation-2, 0, 100);
-        log(`${courtGuest.name} departs the court unattended and unimpressed.`, "");
-      } else {
-        log(`${courtGuest.name} departs the court, thanking House ${kd.house} for its hospitality.`, "");
-      }
-      courtGuest = null;
+    if(tick >= courtGuest.departTick && !courtGuest.awaitingDecision){
+      courtGuest.awaitingDecision = true;
+      log(`${courtGuest.name} prepares to depart the court — decide whether to offer them a position.`, "gold-event");
     }
     return;
   }
@@ -886,9 +908,10 @@ function tickCourtGuest(){
     const name = male?choice(GUEST_NAMES_MALE):choice(GUEST_NAMES_FEMALE);
     const gift = choice(GUEST_GIFTS);
     const giftValue = randi(30,140);
+    const skill = randi(3,10);
     courtGuest = {
-      name, male, sourceKingdomId, gift, giftValue,
-      arrivalTick: tick, departTick: tick+3,
+      name, male, sourceKingdomId, gift, giftValue, skill,
+      arrivalTick: tick, departTick: tick+3, awaitingDecision:false,
       acted: {gift:false, trade:false, betrothal:false}
     };
     const originLabel = sourceKingdomId!==null ? `House ${kingdoms[sourceKingdomId].house}` : "a distant land";
@@ -896,12 +919,53 @@ function tickCourtGuest(){
   }
 }
 
+window.courtRetainGuest = function(){
+  const kd = kingdoms[playerKingdomId];
+  if(!courtGuest || !courtGuest.awaitingDecision) return;
+  const cost = 100 + courtGuest.skill*15;
+  if(kd.gold < cost) return;
+  kd.gold -= cost;
+  kd.courtiers.push({ id:"co"+(++childCounter), name:courtGuest.name, male:courtGuest.male, skill:courtGuest.skill, role:null });
+  kd.reputation = clamp(kd.reputation+2, 0, 100);
+  adjustRelation(kd, courtGuest.sourceKingdomId, 8);
+  log(`${courtGuest.name} accepts a place at your court.`, "gold-event");
+  courtGuest = null;
+  renderCourt();
+};
+
+window.courtReleaseGuest = function(){
+  const kd = kingdoms[playerKingdomId];
+  if(!courtGuest || !courtGuest.awaitingDecision) return;
+  if(!courtGuest.acted.gift && !courtGuest.acted.trade && !courtGuest.acted.betrothal){
+    kd.prestige = Math.max(0, kd.prestige-2);
+    kd.reputation = clamp(kd.reputation-2, 0, 100);
+    log(`${courtGuest.name} departs the court unattended and unimpressed.`, "");
+  } else {
+    log(`${courtGuest.name} departs the court, thanking House ${kd.house} for its hospitality.`, "");
+  }
+  courtGuest = null;
+  renderCourt();
+};
+
+window.appointCourtier = function(courtierId, roleKey){
+  const kd = kingdoms[playerKingdomId];
+  const idx = kd.courtiers.findIndex(c=>c.id===courtierId);
+  if(idx<0) return;
+  const c = kd.courtiers[idx];
+  kd.ministers[roleKey] = { name:c.name, male:c.male, skill:c.skill, upkeep: Math.round(c.skill*1.5) };
+  kd.courtiers.splice(idx,1);
+  log(`${c.name} is appointed ${MINISTER_ROLES.find(r=>r.key===roleKey).label}.`, "gold-event");
+  renderCourt();
+  updateSidebar();
+};
+
 window.courtAcceptGift = function(){
   const kd = kingdoms[playerKingdomId];
   if(!courtGuest || courtGuest.acted.gift) return;
   kd.gold += courtGuest.giftValue;
   kd.prestige += 2;
   kd.reputation = clamp(kd.reputation+1, 0, 100);
+  adjustRelation(kd, courtGuest.sourceKingdomId, 4);
   courtGuest.acted.gift = true;
   log(`You accept ${courtGuest.gift} from ${courtGuest.name}, worth ${courtGuest.giftValue} gold.`, "gold-event");
   renderCourt();
@@ -914,6 +978,7 @@ window.courtTradeDeal = function(){
   kd.gold += profit;
   kd.prestige += 1;
   kd.reputation = clamp(kd.reputation+1, 0, 100);
+  adjustRelation(kd, courtGuest.sourceKingdomId, 4);
   courtGuest.acted.trade = true;
   log(`A trade deal with ${courtGuest.name} nets House ${kd.house} ${profit} gold.`, "gold-event");
   renderCourt();
@@ -928,10 +993,12 @@ window.courtProposeBetrothal = function(){
     kd.spouse = { name: courtGuest.name, male: courtGuest.male };
     kd.prestige += 15;
     kd.reputation = clamp(kd.reputation+5, 0, 100);
+    adjustRelation(kd, courtGuest.sourceKingdomId, 30);
     log(`${kd.ruler.name} weds ${courtGuest.name} of House ${kingdoms[courtGuest.sourceKingdomId].house}, sealing an alliance!`, "gold-event");
   } else {
     kd.prestige = Math.max(0, kd.prestige-2);
     kd.reputation = clamp(kd.reputation-1, 0, 100);
+    adjustRelation(kd, courtGuest.sourceKingdomId, -5);
     log(`${courtGuest.name} politely declines the marriage proposal.`, "");
   }
   renderCourt();
@@ -1031,6 +1098,8 @@ function moveArmies(){
           if(priorOwner!==null){
             kingdoms[priorOwner].prestige = Math.max(0, kingdoms[priorOwner].prestige-4);
             kingdoms[priorOwner].reputation = clamp(kingdoms[priorOwner].reputation-0.5, 0, 100);
+            adjustRelation(attackerKd, priorOwner, -12);
+            adjustRelation(kingdoms[priorOwner], army.kingdomId, -12);
           }
           log(`${attackerKd.house}'s army crushed a defending force and seized a territory` + (defenderKd? ` from House ${defenderKd.house}.` : "."), "war-event");
           handleCapitalStatus(nextKey, priorOwner, army.kingdomId);
@@ -1065,6 +1134,8 @@ function moveArmies(){
         if(priorOwner!==null){
           kingdoms[priorOwner].prestige = Math.max(0, kingdoms[priorOwner].prestige-4);
           kingdoms[priorOwner].reputation = clamp(kingdoms[priorOwner].reputation-0.5, 0, 100);
+          adjustRelation(attackerKd, priorOwner, -12);
+          adjustRelation(kingdoms[priorOwner], army.kingdomId, -12);
         }
         log(`${attackerKd.house} forces have seized a territory` + (defenderKd? ` from House ${defenderKd.house}.` : "."), "war-event");
         handleCapitalStatus(nextKey, priorOwner, army.kingdomId);
@@ -1130,7 +1201,8 @@ function aiTurn(){
         const defTroops = enemies.length ? enemies.reduce((s,a)=>s+a.troops,0) : localDefenders(t);
         const targetKd = t.owner!==null ? kingdoms[t.owner] : null;
         const repDeterrence = targetKd ? (targetKd.reputation-50)*0.15 : 0;
-        const score = army.troops - defTroops*TERRAINS[t.terrain].defense - repDeterrence;
+        const relToTarget = (targetKd && kd.relations) ? (kd.relations[targetKd.id]||0) : 0;
+        const score = army.troops - defTroops*TERRAINS[t.terrain].defense - repDeterrence - relToTarget*0.2;
         if(score > bestScore){ bestScore = score; best = t; }
       }
       if(best && bestScore > -20){
@@ -1169,6 +1241,7 @@ function gameTick(){
   updateSidebar();
   draw();
   if(sidePanelOpen && sideTab==="court") renderCourt();
+  if(sidePanelOpen && sideTab==="relations") renderRelations();
 }
 
 function endTurn(){
@@ -1662,7 +1735,37 @@ function setSideTab(tabName){
   });
   document.getElementById("sideDynastyContent").style.display = sideTab==="dynasty" ? "block" : "none";
   document.getElementById("sideCourtContent").style.display = sideTab==="court" ? "block" : "none";
+  document.getElementById("sideRelationsContent").style.display = sideTab==="relations" ? "block" : "none";
   if(sideTab==="court") renderCourt();
+  if(sideTab==="relations") renderRelations();
+}
+
+function renderRelations(){
+  if(sideTab!=="relations") return;
+  const kd = kingdoms[playerKingdomId];
+  if(!kd) return;
+
+  let hh = "";
+  hh += `<div class="statline"><span>Spouse</span><b>${kd.spouse ? kd.spouse.name : "None"}</b></div>`;
+  hh += `<div class="statline"><span>Children</span><b>${kd.children.length}</b></div>`;
+  const ministerCount = Object.values(kd.ministers).filter(m=>m).length;
+  hh += `<div class="statline"><span>Ministers Appointed</span><b>${ministerCount} / ${MINISTER_ROLES.length}</b></div>`;
+  hh += `<div class="statline"><span>Court Circle</span><b>${kd.courtiers.length} awaiting a role</b></div>`;
+  document.getElementById("relationsHousehold").innerHTML = hh;
+
+  let fr = "";
+  const others = kingdoms.filter(k=>k.id!==playerKingdomId);
+  if(others.length===0){
+    fr = `<div class="courtEmpty">No other houses remain.</div>`;
+  } else {
+    others.slice().sort((a,b)=>(kd.relations[b.id]||0)-(kd.relations[a.id]||0)).forEach(other=>{
+      const v = kd.relations[other.id]||0;
+      const label = relationLabel(v);
+      const color = v>=20 ? "var(--gold)" : (v<=-20 ? "var(--blood)" : "var(--ink-soft)");
+      fr += `<div class="courtRow"><span><span class="swatch" style="background:${other.color}"></span>House ${other.house}${other.alive?"":" (fallen)"}</span><b style="color:${color};">${label} (${Math.round(v)})</b></div>`;
+    });
+  }
+  document.getElementById("relationsForeign").innerHTML = fr;
 }
 
 function setCourtTab(tabName){
@@ -1721,6 +1824,18 @@ function renderCourtFamily(){
 function renderCourtCabinet(){
   const kd = kingdoms[playerKingdomId];
   let html = "";
+  if(kd.courtiers.length>0){
+    html += `<h3 style="font-family:'Cinzel',serif;color:var(--blood);font-size:14px;margin:0 0 6px;">Court Circle</h3>`;
+    html += `<div style="font-size:12px;color:var(--ink-soft);margin-bottom:6px;">Guests retained at court. Appoint them to a ministry at no extra cost.</div>`;
+    kd.courtiers.forEach(c=>{
+      html += `<div class="courtRow"><span>${c.male?"🧔":"👩"} <b>${c.name}</b> — Skill ${c.skill}</span></div>`;
+      html += `<div style="display:flex;flex-wrap:wrap;gap:5px;margin:2px 0 8px;">`;
+      MINISTER_ROLES.forEach(role=>{
+        html += `<button class="courtBtn secondary" style="font-size:11px;padding:5px 8px;" onclick="window.appointCourtier('${c.id}','${role.key}')">${role.icon} ${role.label}</button>`;
+      });
+      html += `</div>`;
+    });
+  }
   MINISTER_ROLES.forEach(role=>{
     const m = kd.ministers[role.key];
     html += `<h3 style="font-family:'Cinzel',serif;color:var(--blood);font-size:14px;margin:12px 0 6px;">${role.icon} ${role.label}</h3>`;
@@ -1750,6 +1865,19 @@ function renderCourtGuests(){
   }
   const g = courtGuest;
   const origin = g.sourceKingdomId!==null ? `House ${kingdoms[g.sourceKingdomId].house}` : "a distant land";
+
+  if(g.awaitingDecision){
+    const cost = 100 + g.skill*15;
+    const affordable = kd.gold >= cost;
+    let html = `<div class="courtRow"><span>${g.male?"🧔":"👩"} <b>${g.name}</b> of ${origin} is ready to depart.</span></div>`;
+    html += `<div style="font-size:12.5px;color:var(--ink-soft);margin:8px 0;">Skill ${g.skill}. Offer them a permanent place at your court, or let them return home.</div>`;
+    html += `<div style="display:flex;flex-wrap:wrap;gap:8px;">`;
+    html += `<button class="courtBtn" ${affordable?"":"disabled"} onclick="window.courtRetainGuest()">Offer Court Position (${cost} gold)</button>`;
+    html += `<button class="courtBtn secondary" onclick="window.courtReleaseGuest()">Let Them Leave</button>`;
+    html += `</div>`;
+    return html;
+  }
+
   const turnsLeft = g.departTick - tick;
   let html = `<div class="courtRow"><span>${g.male?"🧔":"👩"} <b>${g.name}</b> of ${origin} — bearing ${g.gift}</span><span>${turnsLeft} turn${turnsLeft===1?"":"s"} left</span></div>`;
   html += `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;">`;
@@ -2119,6 +2247,7 @@ function newGame(){
   sideTab = "dynasty";
   document.getElementById("sideDynastyContent").style.display = "block";
   document.getElementById("sideCourtContent").style.display = "none";
+  document.getElementById("sideRelationsContent").style.display = "none";
   document.querySelectorAll(".sideTabBtn").forEach(b=>{
     b.classList.toggle("active", b.dataset.tab==="dynasty");
   });
